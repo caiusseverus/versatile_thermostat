@@ -2138,11 +2138,11 @@ async def test_smartpi_startup_initializes_cycle(hass: HomeAssistant, smartpi_th
         }
         # prev_params is _current_cycle_params (already set manually)
         
-        await algo.on_cycle_completed(new_params, algo._current_cycle_params)
+        await algo.on_cycle_completed()
 
         # Check reasons
-        # If it was skipped due to "no start snapshot", reason would be "skip: no start snapshot"
-        # If it proceeds, it might skip due to "low excitation" or "collecting b meas", but NOT "no start snapshot"
+        # Learning is now triggered via calculate(), not on_cycle_completed().
+        # The reason should not be "skip: no start snapshot" (init value is "init").
         assert algo.est.learn_last_reason != "skip: no start snapshot"
 
 def test_integral_reset_on_off_mode():

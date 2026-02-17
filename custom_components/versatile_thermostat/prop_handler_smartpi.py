@@ -7,11 +7,10 @@ from typing import TYPE_CHECKING
 from homeassistant.util import slugify
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_track_time_interval
-from datetime import timedelta, datetime
-from .timing_utils import calculate_cycle_times
-from .smartpi.guards import GuardAction
+from datetime import timedelta
 
 from .prop_algo_smartpi import SmartPI
+from .cycle_scheduler import calculate_cycle_times
 from .smartpi.const import (
     SMARTPI_RECALC_INTERVAL_SEC,
     SmartPIPhase,
@@ -124,8 +123,6 @@ class SmartPIHandler:
         if t.prop_algorithm and isinstance(t.prop_algorithm, SmartPI):
             # Check availability of sensors
             if t.current_temperature is not None and t.current_outdoor_temperature is not None:
-                # Use restored u_applied if available, else 0
-                # CycleManager handles initialization automatically in process_cycle
                 _LOGGER.debug("%s - SmartPI startup: ready for cycle management", t)
 
         # Check if we need to start the periodic recalculation timer
@@ -151,9 +148,18 @@ class SmartPIHandler:
 
         self._stop_recalc_timer()
 
+    def on_scheduler_ready(self, scheduler) -> None:
+        """Register SmartPI learning callbacks on the cycle scheduler."""
+        algo = self._thermostat.prop_algorithm
+        if algo:
+            scheduler.register_cycle_start_callback(algo.on_cycle_started)
+            scheduler.register_cycle_end_callback(algo.on_cycle_completed)
+
     async def control_heating(self, timestamp=None, force=False):
         """Control heating using SmartPI."""
         t = self._thermostat
+        from datetime import datetime
+        from .smartpi.guards import GuardAction
 
         if t.prop_algorithm:
             # Learning update
@@ -214,6 +220,7 @@ class SmartPIHandler:
                     # 1. Get requested percentage from algorithm
                     requested_on_percent = t.prop_algorithm.on_percent
 
+
                     # 2. Calculate timing with constraints
                     on_time_sec, off_time_sec, forced_by_timing = calculate_cycle_times(
                         requested_on_percent,
@@ -222,8 +229,10 @@ class SmartPIHandler:
                         t.minimal_deactivation_delay
                     )
 
+
                     # 3. Derive realized percentage
                     realized_on_percent = on_time_sec / (t.cycle_min * 60)
+
 
                     # 4. Notify algorithm of realized result for closed-loop anti-windup/tracking
                     # We calculate dt_min here as it's needed for anti-windup
@@ -232,6 +241,7 @@ class SmartPIHandler:
                         ts = timestamp.timestamp() if isinstance(timestamp, datetime) else timestamp
                         if getattr(t.prop_algorithm, "_last_calculate_time", None):
                             dt_min = (ts - getattr(t.prop_algorithm, "_last_calculate_time")) / 60.0
+
 
                     if hasattr(t.prop_algorithm, "update_realized_power"):
                         t.prop_algorithm.update_realized_power(realized_on_percent, forced_by_timing, dt_min)
@@ -260,37 +270,19 @@ class SmartPIHandler:
             if t.is_device_active:
                 await t.async_underlying_entity_turn_off()
         else:
-            # Calculate timing for underlying entities
-            if t.prop_algorithm:
-                on_percent = t.prop_algorithm.on_percent
-                on_time_sec, off_time_sec, _ = calculate_cycle_times(
-                    on_percent,
-                    t.cycle_min,
-                    t.minimal_activation_delay,
-                    t.minimal_deactivation_delay
-                )
-            else:
-                on_time_sec = None
-                off_time_sec = None
-                on_percent = None
+            on_percent = t.prop_algorithm.on_percent if t.prop_algorithm else 0.0
 
             # Check if on_percent has changed
-            new_on_percent = t.prop_algorithm.on_percent
-            on_percent_changed = abs(new_on_percent - self._last_on_percent) > 0.001
-            self._last_on_percent = new_on_percent
+            on_percent_changed = abs(on_percent - self._last_on_percent) > 0.001
+            self._last_on_percent = on_percent
 
-            # Store on/off times on thermostat for sensors and attributes
-            t._on_time_sec = on_time_sec
-            t._off_time_sec = off_time_sec
-
-            for under in t.underlyings:
-                await under.start_cycle(
-                    t.vtherm_hvac_mode,
-                    on_time_sec,
-                    off_time_sec,
-                    on_percent,
-                    force or (t.prop_algorithm.phase == SmartPIPhase.CALIBRATION) or (t.prop_algorithm.phase == SmartPIPhase.HYSTERESIS and on_percent_changed),
-                )
+            await t.cycle_scheduler.start_cycle(
+                t.vtherm_hvac_mode,
+                on_percent,
+                force
+                or (t.prop_algorithm.phase == SmartPIPhase.CALIBRATION)
+                or (t.prop_algorithm.phase == SmartPIPhase.HYSTERESIS and on_percent_changed),
+            )
 
         # Save state after cycle to persist learning data
         await self._async_save()
@@ -345,12 +337,9 @@ class SmartPIHandler:
             self._start_recalc_timer()
 
             # When resuming from OFF state (e.g., window close), reset the cycle start state
-            # to prevent using stale timestamps. CycleManager will re-init on next process_cycle.
+            # to prevent using stale learning window data.
             if timer_was_stopped and t.prop_algorithm and isinstance(t.prop_algorithm, SmartPI):
-                # Force CycleManager to re-initialize by clearing start date
-                # Note: accessing _cycle_start_date as it is an internal state of CycleManager
-                t.prop_algorithm._cycle_start_date = None
-                t.prop_algorithm._reset_learning_window()
+                t.prop_algorithm.reset_cycle_state()
                 _LOGGER.debug("%s - SmartPI resumed from OFF: cycle and learning window reset", t.name)
         else:
             self._stop_recalc_timer()

@@ -34,10 +34,9 @@ async def test_smartpi_hysteresis_forces_cycle():
     thermostat.last_temperature_slope = 0.0
     thermostat.power_manager = None
 
-    # Mock Underlying Entity
-    underlying = MagicMock()
-    underlying.start_cycle = AsyncMock()
-    thermostat.underlyings = [underlying]
+    # Mock CycleScheduler
+    thermostat.cycle_scheduler = MagicMock()
+    thermostat.cycle_scheduler.start_cycle = AsyncMock()
 
     # Create Handler
     handler = SmartPIHandler(thermostat)
@@ -49,6 +48,7 @@ async def test_smartpi_hysteresis_forces_cycle():
     algo.deadband_mgr = MagicMock()
     algo.deadband_mgr.near_band_changed = False
     type(algo).calibration_state = PropertyMock(return_value=SmartPICalibrationPhase.IDLE)
+    algo.guards = MagicMock()
     # Simulate hysteresis toggling to 100% (changed from default 0%)
     algo.on_percent = 1.0
     algo.calculate = MagicMock()
@@ -78,9 +78,9 @@ async def test_smartpi_hysteresis_forces_cycle():
     # Call control_heating - hysteresis toggled from 0% to 100%
     await handler.control_heating(timestamp=datetime.now())
 
-    # Verify start_cycle call arguments
-    args, kwargs = underlying.start_cycle.call_args
-    force_arg = kwargs.get('force') if 'force' in kwargs else args[4]
+    # Verify start_cycle call arguments on the CycleScheduler
+    args, kwargs = thermostat.cycle_scheduler.start_cycle.call_args
+    force_arg = kwargs.get('force') if 'force' in kwargs else args[2]
 
     print(f"Force argument used: {force_arg}")
 

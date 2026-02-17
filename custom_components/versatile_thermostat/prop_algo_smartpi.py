@@ -50,7 +50,6 @@ from .vtherm_hvac_mode import (
     VThermHvacMode_HEAT,
     VThermHvacMode_OFF,
 )
-from .cycle_manager import CycleManager
 from homeassistant.core import HomeAssistant
 
 from .smartpi.const import (
@@ -100,7 +99,7 @@ from .smartpi.timestamp_utils import convert_monotonic_to_wall_ts, convert_wall_
 _LOGGER = logging.getLogger(__name__)
 
 
-class SmartPI(CycleManager):
+class SmartPI:
     """
     SmartPI Algorithm - Auto-adaptive PI controller for Versatile Thermostat (VTH).
 
@@ -147,13 +146,13 @@ class SmartPI(CycleManager):
         aggregation_mode: str = "median",
         debug_mode: bool = False,
     ) -> None:
-        super().__init__(hass, name, cycle_min, minimal_deactivation_delay)
+        self._hass = hass
+        self._name = name
+        self._cycle_min = cycle_min
         self._hyst_on = hysteresis_on
         self._hyst_off = hysteresis_off
         self._debug_mode = debug_mode
 
-        self._name = name
-        # self._cycle_min is managed by CycleManager
         self.deadband_c = float(deadband_c)
 
         self._minimal_activation_delay = int(minimal_activation_delay)
@@ -614,6 +613,15 @@ class SmartPI(CycleManager):
         """
         self.learn_win.reset()
 
+    def reset_cycle_state(self) -> None:
+        """Reset cycle tracking state (called when resuming from OFF).
+
+        Clears learning window so the next cycle starts fresh.
+        The CycleScheduler will re-drive cycle start/end via its own timer.
+        """
+        self._reset_learning_window()
+        _LOGGER.debug("%s - SmartPI: cycle state reset (learning window cleared)", self._name)
+
     def update_learning(
         self,
         dt_min: float,
@@ -660,34 +668,33 @@ class SmartPI(CycleManager):
 
     async def on_cycle_started(self, on_time_sec: float, off_time_sec: float, on_percent: float, hvac_mode: str) -> None:
         """Called when a cycle starts."""
-        await super().on_cycle_started(on_time_sec, off_time_sec, on_percent, hvac_mode)
         self._setpoint_changed_in_cycle = False
         # Update internal on_percent to match applied value
         self._on_percent = on_percent
         # Reset governance regime tracking for new cycle
         self.gov.on_cycle_start()
 
-    async def on_cycle_completed(self, new_params: dict, prev_params: dict | None) -> bool:
-        """Handle end of cycle (learning). Return False to extend window."""
-        await super().on_cycle_completed(new_params, prev_params)
+        # Notify anti-windup tracker of realized power (migrated from _data_provider)
+        # on_percent here is already the realized (timing-constrained) value from CycleScheduler
+        # _last_calculate_time uses time.monotonic(), so dt_min must use the same clock.
+        now_ts = time.monotonic()
+        dt_min = (now_ts - self._last_calculate_time) / 60.0 if self._last_calculate_time else 0.0
+        self.update_realized_power(u_applied=on_percent, dt_min=dt_min, forced_by_timing=False)
 
-        if prev_params is None:
-            # First cycle or check-in, nothing to learn yet
-            return True
-
-        # 1. Retrieve Context
-        # Note: on_cycle_completed is now mainly used for cycle counting loops.
-        # Learning accumulation is done via update_learning() in calculate().
-        # MOVED TO update_learning() called by calculate() heartbeat.
-        # This method now only handles cycle counting/stats if needed.
-
+    async def on_cycle_completed(self) -> None:
+        """Handle end of cycle (learning)."""
         # Cycle accepted -> Count it
         self._cycles_since_reset += 1
 
-        # NOTE: Slope collection for Near-Band is also moved to update_learning
-        # or calculate() if needed.
+    async def process_cycle(self, timestamp, data_provider, event_sender, force: bool) -> None:
+        """Invoke the cycle data provider to compute timing and realized power.
 
-        return True
+        Cycle boundary tracking (on_cycle_started / on_cycle_completed) is driven
+        by CycleScheduler via registered callbacks. This method only executes the
+        provider so that timing constraints and anti-windup updates are applied.
+        """
+        if data_provider is not None:
+            await data_provider()
 
     @property
     def a(self) -> float:
@@ -989,6 +996,11 @@ class SmartPI(CycleManager):
 
         return u_final
 
+    @property
+    def cycle_min(self) -> float:
+        """Return the cycle duration in minutes."""
+        return self._cycle_min
+
     # Learning window properties - delegate to learn_win component
     @property
     def learn_win_active(self) -> bool:
@@ -1031,9 +1043,7 @@ class SmartPI(CycleManager):
 
     @property
     def cycle_start_dt(self) -> str | None:
-        """Return the start time of the current cycle."""
-        if self._cycle_start_date:
-            return self._cycle_start_date.isoformat()
+        """Return the start time of the current cycle (owned by CycleScheduler)."""
         return None
 
     @property
