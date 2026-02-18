@@ -96,7 +96,6 @@ from .smartpi.timestamp_utils import convert_monotonic_to_wall_ts
 _LOGGER = logging.getLogger(__name__)
 
 
-
 class SmartPI(CycleManager):
     """
     SmartPI Algorithm - Auto-adaptive PI controller for Versatile Thermostat (VTH).
@@ -403,7 +402,6 @@ class SmartPI(CycleManager):
     @_learning_resume_ts.setter
     def _learning_resume_ts(self, value: float | None):
         self.learn_win.set_learning_resume_ts(value)
-
 
     @property
     def _near_band_below_deg(self) -> float:
@@ -801,7 +799,6 @@ class SmartPI(CycleManager):
         else:
             self.gov.last_decision_thermal = value
 
-
     @property
     def freeze_reason_thermal(self) -> str:
         return self.gov.last_freeze_reason_thermal.value
@@ -823,7 +820,6 @@ class SmartPI(CycleManager):
     @property
     def freeze_reason_gains(self) -> str:
         return self.gov.last_freeze_reason_gains.value
-
 
     @property
     def bootstrap_progress(self) -> int | None:
@@ -999,7 +995,6 @@ class SmartPI(CycleManager):
         # but if we force it, we should report it.
 
         return u_final
-
 
     # Learning window properties - delegate to learn_win component
     @property
@@ -1569,6 +1564,7 @@ class SmartPI(CycleManager):
         ff_result = apply_ff_gate(
             u_ff_raw=u_ff,
             error=error,
+            near_band_above_deg=self.deadband_mgr.near_band_above_deg,
         )
         u_ff = ff_result.u_ff_eff
         self._last_ff_reason = ff_result.ff_reason
