@@ -12,7 +12,13 @@ from .timing_utils import calculate_cycle_times
 from .smartpi.guards import GuardAction
 
 from .prop_algo_smartpi import SmartPI
-from .smartpi.const import SMARTPI_RECALC_INTERVAL_SEC, SmartPIPhase, SmartPICalibrationPhase
+from .smartpi.const import (
+    SMARTPI_RECALC_INTERVAL_SEC,
+    SmartPIPhase,
+    SmartPICalibrationPhase,
+    SmartPICalibrationResult,
+    NEAR_BAND_HYSTERESIS_C,
+)
 from .const import (
     CONF_MINIMAL_ACTIVATION_DELAY,
     CONF_MINIMAL_DEACTIVATION_DELAY,
@@ -337,6 +343,8 @@ class SmartPIHandler:
                 _LOGGER.debug("%s - SmartPI resumed from OFF: cycle and learning window reset", t.name)
         else:
             self._stop_recalc_timer()
+            # Cancel any ongoing calibration when switching to OFF/SLEEP mode
+            await self._cancel_calibration_if_active()
 
     def _start_recalc_timer(self):
         """Start the periodic recalculation timer."""
@@ -366,6 +374,37 @@ class SmartPIHandler:
             remove_callback()
             t._smartpi_recalc_timer_remove = None
             _LOGGER.debug("%s - SmartPI calc timer stopped", t)
+
+    async def _cancel_calibration_if_active(self):
+        """Cancel any ongoing calibration (manual or auto) when HVAC is turned off."""
+        t = self._thermostat
+        algo = t.prop_algorithm
+        if not algo or not isinstance(algo, SmartPI):
+            return
+
+        if not algo.calibration_mgr.is_calibrating:
+            return
+
+        _LOGGER.info("%s - HVAC OFF: canceling ongoing calibration", t.name)
+
+        # Reset the calibration manager
+        algo.calibration_mgr.reset()
+
+        # Notify autocalib trigger about the cancellation
+        now_wall = time.time()
+        event = algo.autocalib.on_calibration_complete(now_wall, algo, SmartPICalibrationResult.CANCELLED)
+
+        # Fire event if autocalib returns one
+        if event:
+            t.hass.bus.fire(EventType.SMART_PI_EVENT.value, {"entity_id": t.entity_id, "type": event.event_type, "data": event.data or {}})
+
+        # Reset tracking state
+        self._prev_is_calibrating = False
+
+        # Update attributes and save state
+        self.update_attributes()
+        t.async_write_ha_state()
+        await self._async_save()
 
     def update_attributes(self):
         """Add SmartPI-specific attributes."""
