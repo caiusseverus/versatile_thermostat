@@ -1220,7 +1220,7 @@ class SmartPI(CycleManager):
             "db_state": self.deadband_mgr.save_state() if hasattr(self.deadband_mgr, "save_state") else {},
             "cal_state": self.calibration_mgr.save_state() if hasattr(self.calibration_mgr, "save_state") else {},
             "gs_state": self.gain_scheduler.save_state() if hasattr(self.gain_scheduler, "save_state") else {},
-            "guards_state": self.guards.save_state()
+            "guards_state": self.guards.save_state(),
             "ac_state": self.autocalib.save_state(),
         }
         return state

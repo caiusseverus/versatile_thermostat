@@ -43,7 +43,7 @@ ESSENTIAL_KEYS = {
     "bootstrap_state",
     # Deadtimes (Always published)
     "deadtime_heat_s",
-    "deadtime_cool_s",,
+    "deadtime_cool_s",
     # AutoCalibTrigger §6.1
     "autocalib_last_trigger_ts",
     "autocalib_next_check_ts",
