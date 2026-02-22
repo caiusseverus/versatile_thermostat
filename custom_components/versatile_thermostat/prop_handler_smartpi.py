@@ -8,9 +8,11 @@ from homeassistant.util import slugify
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import async_track_time_interval
 from datetime import timedelta, datetime
+from .timing_utils import calculate_cycle_times
+from .smartpi.guards import GuardAction
 
 from .prop_algo_smartpi import SmartPI
-from .smartpi.const import SMARTPI_RECALC_INTERVAL_SEC, SmartPIPhase, SmartPICalibrationPhase, NEAR_BAND_HYSTERESIS_C
+from .smartpi.const import SMARTPI_RECALC_INTERVAL_SEC, SmartPIPhase, SmartPICalibrationPhase
 from .const import (
     CONF_MINIMAL_ACTIVATION_DELAY,
     CONF_MINIMAL_DEACTIVATION_DELAY,
@@ -143,9 +145,6 @@ class SmartPIHandler:
     async def control_heating(self, timestamp=None, force=False):
         """Control heating using SmartPI."""
         t = self._thermostat
-        from datetime import datetime
-        from .timing_utils import calculate_cycle_times
-        from .smartpi.guards import GuardAction
 
         if t.prop_algorithm:
             # Learning update
@@ -197,7 +196,7 @@ class SmartPIHandler:
                 async def _data_provider():
                     # 1. Get requested percentage from algorithm
                     requested_on_percent = t.prop_algorithm.on_percent
-                    
+
                     # 2. Calculate timing with constraints
                     on_time_sec, off_time_sec, forced_by_timing = calculate_cycle_times(
                         requested_on_percent,
@@ -205,10 +204,10 @@ class SmartPIHandler:
                         t.minimal_activation_delay,
                         t.minimal_deactivation_delay
                     )
-                    
+
                     # 3. Derive realized percentage
                     realized_on_percent = on_time_sec / (t.cycle_min * 60)
-                    
+
                     # 4. Notify algorithm of realized result for closed-loop anti-windup/tracking
                     # We calculate dt_min here as it's needed for anti-windup
                     dt_min = 0.0
@@ -216,7 +215,7 @@ class SmartPIHandler:
                         ts = timestamp.timestamp() if isinstance(timestamp, datetime) else timestamp
                         if t.prop_algorithm._last_calculate_time:
                             dt_min = (ts - t.prop_algorithm._last_calculate_time) / 60.0
-                    
+
                     if hasattr(t.prop_algorithm, "update_realized_power"):
                         t.prop_algorithm.update_realized_power(realized_on_percent, forced_by_timing, dt_min)
 
@@ -257,7 +256,7 @@ class SmartPIHandler:
                 on_time_sec = None
                 off_time_sec = None
                 on_percent = None
-            
+
             # Check if on_percent has changed
             new_on_percent = t.prop_algorithm.on_percent
             on_percent_changed = abs(new_on_percent - self._last_on_percent) > 0.001
@@ -273,10 +272,7 @@ class SmartPIHandler:
                     on_time_sec,
                     off_time_sec,
                     on_percent,
-
-                    force 
-                    or (t.prop_algorithm.phase == SmartPIPhase.CALIBRATION)
-                    or (t.prop_algorithm.phase == SmartPIPhase.HYSTERESIS and on_percent_changed),
+                    force or (t.prop_algorithm.phase == SmartPIPhase.CALIBRATION) or (t.prop_algorithm.phase == SmartPIPhase.HYSTERESIS and on_percent_changed),
                 )
 
         # Save state after cycle to persist learning data
