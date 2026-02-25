@@ -1383,7 +1383,7 @@ class SmartPI(CycleManager):
         # thermal reality; starting from 0 is safer.
         self.ctl.integral = 0.0
         self.ctl.u_prev = 0.0
-        
+
         # Load main algorithm scalars
         self._deadtime_skip_count_a = int(migrated.get("deadtime_skip_count_a", 0))
         self._deadtime_skip_count_b = int(migrated.get("deadtime_skip_count_b", 0))
@@ -1513,7 +1513,6 @@ class SmartPI(CycleManager):
             # Bypass filter and keep its state clean so it is ready when STABLE starts.
             self.sp_mgr.filtered_setpoint = target_temp
             target_temp_filt = target_temp
-        self._filtered_setpoint = target_temp_filt
 
         setpoint_changed = False
         old_target_temp = self._last_target_temp  # Save before update
