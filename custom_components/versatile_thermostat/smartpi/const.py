@@ -230,7 +230,8 @@ LEARN_BOOTSTRAP_COUNT = 10      # Number of learn cycles before applying strict 
 # --- SmartPI Robust Learning Constants ---
 # Median+MAD Strategy Constants
 AB_HISTORY_SIZE = 31      # Keep last 31 (ODD) values
-AB_MIN_SAMPLES = 11       # Start learning after 11 (ODD) values
+AB_MIN_SAMPLES_B = 11     # Min samples for b median (OFF phase)
+AB_MIN_SAMPLES_A = 7      # Min samples for a median (ON phase)
 AB_MAD_SIGMA_MULT = 3.0   # Outlier rejection threshold (sigma)
 
 AB_MAD_K = 1.4826         # Sigma scaling factor for MAD
@@ -242,6 +243,12 @@ DT_MAX_OK = 30.0                # Max dt (minutes) for valid derivative window
 DT_DERIVATIVE_MIN_ABS = 0.03    # Min absolute dT (°C) if quantization unknown
 LEARN_QUALITY_THRESHOLD = 0.25  # Min QI quality to accept learning
 QUANTIZATION_ROUND_TO = 0.001   # Rounding / binning for quantization detection
+
+# Sequential gate a->b
+AB_B_CONVERGENCE_MIN_SAMPLES: int = 11
+AB_B_CONVERGENCE_MAD_RATIO: float = 0.30
+AB_B_CONVERGENCE_RANGE_RATIO: float = 0.10
+AB_B_CONVERGENCE_MIN_BHIST: int = 5
 
 # --- SmartPI Learning Window Constants ---
 # Learning requires at least one full cycle (measured by _cycle_min)

@@ -19,6 +19,8 @@ from custom_components.versatile_thermostat.smartpi.const import (
     SETPOINT_BOOST_RATE,
     MAX_STEP_PER_MINUTE,
     AB_HISTORY_SIZE,
+    AB_B_CONVERGENCE_MIN_SAMPLES,
+    AB_B_CONVERGENCE_MIN_BHIST,
 )
 import math
 from custom_components.versatile_thermostat.vtherm_hvac_mode import VThermHvacMode_HEAT, VThermHvacMode_COOL, VThermHvacMode_OFF
@@ -252,7 +254,8 @@ def test_abestimator_learn_a_on():
 
     # First, learn b manually or via loop
     est.b = 0.001
-    est.learn_ok_count_b = 10
+    est.learn_ok_count_b = AB_B_CONVERGENCE_MIN_SAMPLES
+    est._b_hat_hist.extend([est.b] * AB_B_CONVERGENCE_MIN_BHIST)
 
     # Init a closer to target to speed up convergence verification
     est.a = 0.03
@@ -297,7 +300,7 @@ def test_abestimator_skip_gray_zone():
     )
 
     assert est.learn_ok_count == 0
-    assert "skip: low excitation" in est.learn_last_reason
+    assert "skip: u mid-range" in est.learn_last_reason
 
 
 def test_abestimator_learn_b_off_phase():
@@ -1022,6 +1025,7 @@ def test_abestimator_no_saturation_bias():
     est.learn_ok_count = 5
     est.learn_ok_count_b = 20
     est.b = 0.002
+    est._b_hat_hist.extend([0.002] * 10)
 
     for i in range(7):
         u_val = 0.5 + i * 0.01
