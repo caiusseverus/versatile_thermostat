@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, TYPE_CHECKING
 from .const import (
+    AB_A_SOFT_GATE_MIN_B,
     SmartPIPhase,
     EPISODE_MIN_DURATION_ON_S,
     EPISODE_MIN_DURATION_OFF_S,
@@ -71,7 +72,7 @@ def build_diagnostics(algo: SmartPI, debug_mode: bool = False) -> Dict[str, Any]
         "learn_skip_count": int(algo.est.learn_skip_count),
         "learn_last_reason": str(algo.est.learn_last_reason),
         "learn_b_converged": algo.est.b_converged_for_a(),
-        "learn_a_blocked_by_b": not algo.est.b_converged_for_a(),
+        "learn_a_blocked_by_b": algo.est.learn_ok_count_b < AB_A_SOFT_GATE_MIN_B,
         # A1/A2/A3 Diagnostics
         "diag_dTdt_method": algo.est.diag_dTdt_method,
         "diag_b_mad_over_med": round(algo.est.diag_b_mad_over_med, 3) if algo.est.diag_b_mad_over_med is not None else None,

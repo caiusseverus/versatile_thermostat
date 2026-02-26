@@ -34,8 +34,13 @@ Au tout premier démarrage (ou après un reset de l'apprentissage), le modèle t
 Cette phase génère des cycles de chauffe francs et nets. L'apprentissage se déroule en **3 étapes séquentielles**, visibles dans l'attribut `bootstrap_state` :
 
 1.  **Étape 1 — Temps Mort** : Avant tout, le système mesure le délai de réaction thermique (`deadtime_heat` et `deadtime_cool`). La collecte des paramètres `a` et `b` n'est autorisée que lorsque le temps mort correspondant est disponible (chauffage → `a`, refroidissement → `b`).
-2.  **Étape 2 — Collecte initiale** : Une fois les deux temps morts acquis, collecte des premières mesures (`emeas`) jusqu'à 11 points minimum pour `a` et `b`.
+2.  **Étape 2 — Collecte initiale** : Une fois les deux temps morts acquis, collecte des premières mesures (`emeas`) jusqu'à un minimum de **7** points pour `a` et **11** points pour `b`.
 3.  **Étape 3 — Apprentissage complet** : Construction de l'historique complet jusqu'à 31 mesures pour fiabiliser le modèle thermique.
+
+En phase de chauffe, l'apprentissage de `a` suit un gate séquentiel :
+*   `a` reste bloqué tant que `learn_ok_count_b < 5`.
+*   Dès que ce seuil est atteint, `a` peut être appris.
+*   Le minimum de points pour `a` est de 7 tant que `b` n'est pas convergé, puis passe à 11 lorsque `b` est convergé.
 
 > **Transition** : L'algorithme passe automatiquement en phase **STABLE** dès qu'il a collecté assez de mesures fiables (31 mesures minimum).
 > **Note** : En mode Hystérésis, la coupure est **instantanée** dès que la température dépasse le seuil haut, interrompant le cycle PWM en cours pour éviter toute surchauffe.
@@ -130,6 +135,8 @@ Pour les utilisateurs avancés, l'entité climate expose des attributs détaill�
 | `learn_ok_count` | Nombre total d'apprentissages validés |
 | `learn_ok_count_a` | Nombre d'apprentissages validés pour le paramètre `a` |
 | `learn_ok_count_b` | Nombre d'apprentissages validés pour le paramètre `b` |
+| `learn_b_converged` | `true` si `b` est statistiquement convergé pour l'apprentissage de `a` |
+| `learn_a_blocked_by_b` | `true` si `a` est bloqué faute d'assez de mesures `b` (`learn_ok_count_b < 5`) |
 | `learn_last_reason` | Raison de la dernière tentative d'apprentissage (succès ou motif de rejet) |
 | `error` | Écart Consigne - Température |
 | `u_ff` | Part de puissance "Feed-Forward" (anticipation météo) |
@@ -160,7 +167,7 @@ Pour les utilisateurs avancés, l'entité climate expose des attributs détaill�
 | `freeze_reason_gains` | Raison du gel de l'adaptation des gains (Kp, Ki) |
 | `last_decision_thermal` | Décision de gouvernance pour l'apprentissage thermique |
 | `last_decision_gains` | Décision de gouvernance pour l'adaptation des gains |
-| `bootstrap_state` | Progression détaillée de la phase Bootstrap : `step1 - deadtime: heat:Xs cool:null`, `step2 - collecting emeas: A:x/11 B:x/11`, `step3 - learning thermal model: A:x/31 B:x/31`. Absent hors phase Hystérésis. |
+| `bootstrap_state` | Progression détaillée de la phase Bootstrap : `step1 - deadtime: heat:Xs cool:null`, `step2 - collecting emeas: A:x/7 B:x/11`, `step3 - learning thermal model: A:x/31 B:x/31`. Absent hors phase Hystérésis. |
 | `bootstrap_progress` | Pourcentage de progression du Bootstrap (0-100). Absent hors phase Hystérésis. |
 | `calibration_state` | État actuel de la calibration : `Idle`, `CoolDown`, `HeatUp`, `CoolDownFinal` |
 | `last_calibration_time` | Horodatage de la dernière calibration réussie |

@@ -69,13 +69,25 @@ L'estimation des paramètres $a$ et $b$ est réalisée par la classe `ABEstimato
 
 Lorsque le système démarre pour la première fois (phase `HYSTERESIS`), l'apprentissage suit une **séquence obligatoire** en 3 étapes :
 
-1.  **Étape 1 — Temps Mort prioritaire** : Avant toute collecte de mesures `a`/`b`, le système attend d'avoir mesuré les temps morts. La collecte de `a` (chauffage) est bloquée jusqu'à `deadtime_heat_reliable = True`. La collecte de `b` (refroidissement) est bloquée jusqu'à `deadtime_cool_reliable = True`. Pendant cette étape, `bootstrap_state` affiche : `step1 - deadtime: heat:Xs [A:x/11] cool:null`.
+1.  **Étape 1 — Temps Mort prioritaire** : Avant toute collecte de mesures `a`/`b`, le système attend d'avoir mesuré les temps morts. La collecte de `a` (chauffage) est bloquée jusqu'à `deadtime_heat_reliable = True`. La collecte de `b` (refroidissement) est bloquée jusqu'à `deadtime_cool_reliable = True`. Pendant cette étape, `bootstrap_state` affiche : `step1 - deadtime: heat:Xs [A:x/7] cool:null`.
 
-2.  **Étape 2 — Collecte initiale** : Une fois les deux temps morts acquis, le système collecte les premières `emeas` (minimum 11 points pour `a` et `b`). `bootstrap_state` : `step2 - collecting emeas: A:x/11 B:x/11`.
+2.  **Étape 2 — Collecte initiale** : Une fois les deux temps morts acquis, le système collecte les premières `emeas` (minimum 7 points pour `a`, 11 points pour `b`). `bootstrap_state` : `step2 - collecting emeas: A:x/7 B:x/11`.
 
 3.  **Étape 3 — Apprentissage complet** : Construction de l'historique complet (31 mesures). `bootstrap_state` : `step3 - learning thermal model: A:x/31 B:x/31`.
 
 Ce séquencement garantit que les temps morts — indispensables au filtrage des fenêtres d'apprentissage — sont disponibles avant que les premières mesures de `a`/`b` ne soient acceptées, améliorant ainsi leur qualité.
+
+En phase ON, l'apprentissage de `a` applique un gate séquentiel avec deux niveaux :
+- Gate soft : `a` est bloqué uniquement tant que `learn_ok_count_b < 5`.
+- Seuil dynamique de collecte de `a` :
+  - `AB_MIN_SAMPLES_A = 7` tant que `b` n'est pas convergé.
+  - `AB_MIN_SAMPLES_A_CONVERGED = 11` lorsque `b` est convergé.
+
+La convergence de `b` est évaluée par `b_converged_for_a()` avec les 4 critères cumulatifs suivants :
+1. `learn_ok_count_b >= AB_B_CONVERGENCE_MIN_SAMPLES` (11).
+2. `len(_b_hat_hist) >= AB_B_CONVERGENCE_MIN_BHIST` (5).
+3. `MAD(b_hat)/Med(b_hat) <= AB_B_CONVERGENCE_MAD_RATIO` (0.30).
+4. `range(last_5_b_hat)/Med(b_hat) <= AB_B_CONVERGENCE_RANGE_RATIO` (0.10).
 
 ### 3.1 Stratégie d'Apprentissage Continue (Window-Based)
 
@@ -371,7 +383,14 @@ Les paramètres clés sont définis dans `smartpi/const.py` :
 | Constante | Valeur | Description |
 |-----------|--------|-------------|
 | `AB_HISTORY_SIZE` | 31 | Taille de l'historique Médiane+MAD |
-| `AB_MIN_SAMPLES` | 11 | Minimum d'échantillons pour démarrer l'estimation |
+| `AB_MIN_SAMPLES_B` | 11 | Minimum d'échantillons pour démarrer l'estimation de `b` |
+| `AB_MIN_SAMPLES_A` | 7 | Minimum d'échantillons pour démarrer l'estimation de `a` si `b` non convergé |
+| `AB_MIN_SAMPLES_A_CONVERGED` | 11 | Minimum d'échantillons pour l'estimation de `a` si `b` convergé |
+| `AB_A_SOFT_GATE_MIN_B` | 5 | Minimum de `b` validés pour autoriser l'apprentissage de `a` |
+| `AB_B_CONVERGENCE_MIN_SAMPLES` | 11 | Nombre minimal de `b` validés pour considérer `b` convergé |
+| `AB_B_CONVERGENCE_MIN_BHIST` | 5 | Taille minimale de `_b_hat_hist` pour la convergence de `b` |
+| `AB_B_CONVERGENCE_MAD_RATIO` | 0.30 | Seuil max de dispersion relative `MAD/Med` pour `b` |
+| `AB_B_CONVERGENCE_RANGE_RATIO` | 0.10 | Seuil max de `range(last_5)/Med` pour `b` |
 | `AB_MAD_SIGMA_MULT` | 3.0 | Seuil de rejet des outliers (nombre de sigma) |
 | `LEARN_QUALITY_THRESHOLD` | 0.25 | Qualité minimale (QI) pour accepter un apprentissage |
 | `EPISODE_MIN_DURATION_ON_S` | 600 | Durée min d'un épisode ON (10 min) |

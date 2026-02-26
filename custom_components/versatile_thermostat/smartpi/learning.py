@@ -13,6 +13,7 @@ from typing import Deque, List, Optional, Tuple
 from .timestamp_utils import convert_monotonic_to_wall_ts, convert_wall_to_monotonic_ts
 
 from .const import (
+    AB_A_SOFT_GATE_MIN_B,
     AB_B_CONVERGENCE_MAD_RATIO,
     AB_B_CONVERGENCE_MIN_BHIST,
     AB_B_CONVERGENCE_MIN_SAMPLES,
@@ -21,6 +22,7 @@ from .const import (
     AB_MAD_K,
     AB_MAD_SIGMA_MULT,
     AB_MIN_SAMPLES_A,
+    AB_MIN_SAMPLES_A_CONVERGED,
     AB_MIN_SAMPLES_B,
     AB_VAL_TOLERANCE,
     B_STABILITY_MAD_RATIO_MAX,
@@ -563,13 +565,19 @@ class ABEstimator:
                 self.learn_last_reason = "skip: a delta too small"
                 return
 
-            if not self.b_converged_for_a():
+            if self.learn_ok_count_b < AB_A_SOFT_GATE_MIN_B:
                 self.learn_skip_count += 1
                 self.learn_last_reason = (
-                    f"skip: a blocked (b not converged, "
-                    f"{self.learn_ok_count_b}/{AB_B_CONVERGENCE_MIN_SAMPLES} b samples)"
+                    f"skip: a blocked (b insufficient, "
+                    f"{self.learn_ok_count_b}/{AB_A_SOFT_GATE_MIN_B} b samples)"
                 )
                 return
+
+            min_a_samples = (
+                AB_MIN_SAMPLES_A_CONVERGED
+                if self.b_converged_for_a()
+                else AB_MIN_SAMPLES_A
+            )
 
             a_meas = (dTdt + self.b * delta) / u
             if a_meas <= 0:
@@ -581,11 +589,11 @@ class ABEstimator:
             temp_history = list(self.a_meas_hist)
             temp_history.append(a_meas)
 
-            if len(temp_history) < AB_MIN_SAMPLES_A:
+            if len(temp_history) < min_a_samples:
                 self.a_meas_hist.append(a_meas)
                 self.learn_skip_count += 1
                 self.learn_last_reason = (
-                    f"skip: collecting a meas ({len(self.a_meas_hist)}/{AB_MIN_SAMPLES_A})"
+                    f"skip: collecting a meas ({len(self.a_meas_hist)}/{min_a_samples})"
                 )
                 return
 
