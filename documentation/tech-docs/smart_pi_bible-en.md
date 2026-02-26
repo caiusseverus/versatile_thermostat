@@ -69,13 +69,25 @@ The estimation of parameters $a$ and $b$ is performed by the `ABEstimator` class
 
 When the system starts for the first time (phase `HYSTERESIS`), learning follows a **mandatory 3-step sequence**:
 
-1.  **Step 1 — Dead Time first**: Before any `a`/`b` measurements are collected, the system waits until dead times are measured. Collection of `a` (heating) is blocked until `deadtime_heat_reliable = True`. Collection of `b` (cooling) is blocked until `deadtime_cool_reliable = True`. During this step, `bootstrap_state` shows: `step1 - deadtime: heat:Xs [A:x/11] cool:null`.
+1.  **Step 1 — Dead Time first**: Before any `a`/`b` measurements are collected, the system waits until dead times are measured. Collection of `a` (heating) is blocked until `deadtime_heat_reliable = True`. Collection of `b` (cooling) is blocked until `deadtime_cool_reliable = True`. During this step, `bootstrap_state` shows: `step1 - deadtime: heat:Xs [A:x/7] cool:null`.
 
-2.  **Step 2 — Initial collection**: Once both dead times are acquired, the system collects the first `emeas` (minimum 11 points for `a` and `b`). `bootstrap_state`: `step2 - collecting emeas: A:x/11 B:x/11`.
+2.  **Step 2 — Initial collection**: Once both dead times are acquired, the system collects the first `emeas` (minimum 7 points for `a`, 11 points for `b`). `bootstrap_state`: `step2 - collecting emeas: A:x/7 B:x/11`.
 
 3.  **Step 3 — Full learning**: Builds the complete history (31 measurements). `bootstrap_state`: `step3 - learning thermal model: A:x/31 B:x/31`.
 
 This sequencing ensures that dead times — essential for filtering learning windows — are available before the first `a`/`b` measurements are accepted, improving their quality.
+
+In ON phase, `a` learning applies a two-level sequential gate:
+- Soft gate: `a` is blocked only while `learn_ok_count_b < 5`.
+- Dynamic collection threshold for `a`:
+  - `AB_MIN_SAMPLES_A = 7` while `b` is not converged.
+  - `AB_MIN_SAMPLES_A_CONVERGED = 11` once `b` is converged.
+
+`b` convergence is evaluated by `b_converged_for_a()` with these 4 cumulative criteria:
+1. `learn_ok_count_b >= AB_B_CONVERGENCE_MIN_SAMPLES` (11).
+2. `len(_b_hat_hist) >= AB_B_CONVERGENCE_MIN_BHIST` (5).
+3. `MAD(b_hat)/Med(b_hat) <= AB_B_CONVERGENCE_MAD_RATIO` (0.30).
+4. `range(last_5_b_hat)/Med(b_hat) <= AB_B_CONVERGENCE_RANGE_RATIO` (0.10).
 
 ### 3.1 Continuous Learning Strategy (Window-Based)
 
@@ -374,7 +386,14 @@ Key parameters are defined in `smartpi/const.py`:
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `AB_HISTORY_SIZE` | 31 | Median+MAD history size |
-| `AB_MIN_SAMPLES` | 11 | Minimum samples to start estimation |
+| `AB_MIN_SAMPLES_B` | 11 | Minimum samples to start `b` estimation |
+| `AB_MIN_SAMPLES_A` | 7 | Minimum samples to start `a` estimation while `b` is not converged |
+| `AB_MIN_SAMPLES_A_CONVERGED` | 11 | Minimum samples for `a` estimation once `b` is converged |
+| `AB_A_SOFT_GATE_MIN_B` | 5 | Minimum validated `b` samples to allow `a` learning |
+| `AB_B_CONVERGENCE_MIN_SAMPLES` | 11 | Minimum validated `b` samples to consider `b` converged |
+| `AB_B_CONVERGENCE_MIN_BHIST` | 5 | Minimum `_b_hat_hist` size for `b` convergence |
+| `AB_B_CONVERGENCE_MAD_RATIO` | 0.30 | Max relative dispersion `MAD/Med` threshold for `b` |
+| `AB_B_CONVERGENCE_RANGE_RATIO` | 0.10 | Max `range(last_5)/Med` threshold for `b` |
 | `AB_MAD_SIGMA_MULT` | 3.0 | Outlier rejection threshold (sigma count) |
 | `LEARN_QUALITY_THRESHOLD` | 0.25 | Minimum quality (QI) to accept a learning episode |
 | `EPISODE_MIN_DURATION_ON_S` | 600 | Minimum ON episode duration (10 min) |
