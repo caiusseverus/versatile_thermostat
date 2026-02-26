@@ -13,10 +13,15 @@ from typing import Deque, List, Optional, Tuple
 from .timestamp_utils import convert_monotonic_to_wall_ts, convert_wall_to_monotonic_ts
 
 from .const import (
+    AB_B_CONVERGENCE_MAD_RATIO,
+    AB_B_CONVERGENCE_MIN_BHIST,
+    AB_B_CONVERGENCE_MIN_SAMPLES,
+    AB_B_CONVERGENCE_RANGE_RATIO,
     AB_HISTORY_SIZE,
     AB_MAD_K,
     AB_MAD_SIGMA_MULT,
-    AB_MIN_SAMPLES,
+    AB_MIN_SAMPLES_A,
+    AB_MIN_SAMPLES_B,
     AB_VAL_TOLERANCE,
     B_STABILITY_MAD_RATIO_MAX,
     DELTA_MIN_OFF,
@@ -496,7 +501,11 @@ class ABEstimator:
 
         # ---------- OFF phase: learn b ----------
         # dT/dt = -b * delta  =>  b = -dT/dt / delta
-        if u < U_OFF_MAX and abs(delta) >= DELTA_MIN_OFF:
+        if u < U_OFF_MAX:
+            if abs(delta) < DELTA_MIN_OFF:
+                self.learn_skip_count += 1
+                self.learn_last_reason = "skip: b delta too small"
+                return
 
             b_meas = -dTdt / delta
             if b_meas <= 0:
@@ -508,10 +517,12 @@ class ABEstimator:
             temp_history = list(self.b_meas_hist)
             temp_history.append(b_meas)
 
-            if len(temp_history) < AB_MIN_SAMPLES:
+            if len(temp_history) < AB_MIN_SAMPLES_B:
                 self.b_meas_hist.append(b_meas)
                 self.learn_skip_count += 1
-                self.learn_last_reason = f"skip: collecting b meas ({len(self.b_meas_hist)}/{AB_MIN_SAMPLES})"
+                self.learn_last_reason = (
+                    f"skip: collecting b meas ({len(self.b_meas_hist)}/{AB_MIN_SAMPLES_B})"
+                )
                 return
 
             # Step logic: Select temporary window
@@ -546,7 +557,20 @@ class ABEstimator:
 
         # ---------- ON phase: learn a ----------
         # dT/dt = a*u - b*delta  =>  a = (dT/dt + b*delta) / u
-        if u > U_ON_MIN and abs(delta) >= DELTA_MIN_ON:
+        if u > U_ON_MIN:
+            if abs(delta) < DELTA_MIN_ON:
+                self.learn_skip_count += 1
+                self.learn_last_reason = "skip: a delta too small"
+                return
+
+            if not self.b_converged_for_a():
+                self.learn_skip_count += 1
+                self.learn_last_reason = (
+                    f"skip: a blocked (b not converged, "
+                    f"{self.learn_ok_count_b}/{AB_B_CONVERGENCE_MIN_SAMPLES} b samples)"
+                )
+                return
+
             a_meas = (dTdt + self.b * delta) / u
             if a_meas <= 0:
                 self.learn_skip_count += 1
@@ -557,10 +581,12 @@ class ABEstimator:
             temp_history = list(self.a_meas_hist)
             temp_history.append(a_meas)
 
-            if len(temp_history) < AB_MIN_SAMPLES:
+            if len(temp_history) < AB_MIN_SAMPLES_A:
                 self.a_meas_hist.append(a_meas)
                 self.learn_skip_count += 1
-                self.learn_last_reason = f"skip: collecting a meas ({len(self.a_meas_hist)}/{AB_MIN_SAMPLES})"
+                self.learn_last_reason = (
+                    f"skip: collecting a meas ({len(self.a_meas_hist)}/{AB_MIN_SAMPLES_A})"
+                )
                 return
 
             # Step logic: Select temporary window
@@ -594,7 +620,7 @@ class ABEstimator:
             return
 
         self.learn_skip_count += 1
-        self.learn_last_reason = "skip: low excitation"
+        self.learn_last_reason = "skip: u mid-range"
 
     def tau_reliability(self) -> TauReliability:
         """
@@ -624,6 +650,35 @@ class ABEstimator:
         tau = 1.0 / med_b
         # tau bounds are implicitly enforced by B_MIN/B_MAX
         return TauReliability(reliable=True, tau_min=tau)
+
+    def b_converged_for_a(self) -> bool:
+        """
+        Return True if b is stable enough to enable a learning.
+        """
+        if self.learn_ok_count_b < AB_B_CONVERGENCE_MIN_SAMPLES:
+            return False
+
+        if len(self._b_hat_hist) < AB_B_CONVERGENCE_MIN_BHIST:
+            return False
+
+        recent = list(self._b_hat_hist)
+        med_b = statistics.median(recent)
+        if med_b <= 0:
+            return False
+
+        mad_b = self._mad(recent)
+        if mad_b is None:
+            return False
+
+        if (mad_b / med_b) > AB_B_CONVERGENCE_MAD_RATIO:
+            return False
+
+        last_5 = recent[-5:] if len(recent) >= 5 else recent
+        range_5 = max(last_5) - min(last_5)
+        if (range_5 / med_b) > AB_B_CONVERGENCE_RANGE_RATIO:
+            return False
+
+        return True
 
     def save_state(self) -> dict:
         """Save state for persistence."""
@@ -661,4 +716,3 @@ class ABEstimator:
         self._a_hat_hist = deque(a_hat, maxlen=20)
         b_hat = state.get("b_hat_hist", [])
         self._b_hat_hist = deque(b_hat, maxlen=20)
-

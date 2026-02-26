@@ -6,6 +6,10 @@ varying input values (delta for b, u for a) to compute slopes.
 
 from custom_components.versatile_thermostat.prop_algo_smartpi import SmartPI
 from custom_components.versatile_thermostat.smartpi.learning import ABEstimator
+from custom_components.versatile_thermostat.smartpi.const import (
+    AB_MIN_SAMPLES_B,
+    AB_B_CONVERGENCE_MIN_SAMPLES,
+)
 from custom_components.versatile_thermostat.vtherm_hvac_mode import VThermHvacMode_HEAT
 from unittest.mock import MagicMock
 from .commons import force_smartpi_stable_mode
@@ -50,7 +54,7 @@ def test_median_convergence_a():
 
     # First learn b so it's stable
     true_b = 0.002
-    for i in range(15):
+    for i in range(AB_MIN_SAMPLES_B + AB_B_CONVERGENCE_MIN_SAMPLES + 2):
         delta = 8.0 + (i % 5)  # 8 to 12
         dT = -true_b * delta
         t_ext = 20.0 - delta
