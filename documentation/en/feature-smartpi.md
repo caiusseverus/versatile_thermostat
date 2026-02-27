@@ -138,6 +138,7 @@ For advanced users, the climate entity exposes detailed attributes:
 | `learn_b_converged` | `true` when `b` is statistically converged for learning `a` |
 | `learn_a_blocked_by_b` | `true` when `a` is blocked due to insufficient `b` samples (`learn_ok_count_b < 5`) |
 | `learn_last_reason` | Reason for last learning attempt (success or rejection reason) |
+| `diag_dTdt_method` | Method used for dT/dt estimation: `ols`, `low_amplitude`, `ols_fail`, `insufficient_samples`, etc. |
 | `error` | Setpoint - Temperature deviation |
 | `u_ff` | "Feed-Forward" power share (weather anticipation) |
 | `ff_raw` | Raw Feed-Forward power before scaling (0.0 to 1.0) |

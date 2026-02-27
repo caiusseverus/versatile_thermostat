@@ -101,9 +101,9 @@ L'algorithme accumule les données (T_int, T_ext, Puissance) au fil de l'eau. Un
 
 Une fois ces conditions réunies, l'algorithme "ferme" la fenêtre et lance l'identification.
 
-#### Robustesse (Theil-Sen & Median+MAD)
+#### Robustesse (OLS & Median+MAD)
 Sur la fenêtre identifiée :
-1.  **Calcul de la Pente** : Utilisation de l'estimateur de **Theil-Sen** pour extraire la dérivée $\frac{dT_{int}}{dt}$ de manière robuste au bruit.
+1.  **Calcul de la Pente** : Utilisation de la régression **OLS** (Ordinary Least Squares) sur les données brutes pour extraire la dérivée $\frac{dT_{int}}{dt}$. Le rejet des pentes physiquement aberrantes est assuré par `learn()` via le seuil `max_abs_dT_per_min`.
 2.  **Estimation $a$ et $b$** :
     - Si $u \approx 0$ (Refroidissement) : On estime $b$.
     - Si $u > 0$ (Chauffe) : On estime $a$ (en utilisant le $b$ courant).
@@ -181,6 +181,25 @@ $$ e_p = \beta \cdot T_{consigne} - T_{int} $$
 
 Avec $\beta = 0$ ou une valeur faible, cela transforme l'action P en une rétroaction sur la mesure seule, adoucissant la réponse aux échelons. Dans Smart-PI, une pondération implicite est utilisée via le *Setpoint Boost* et le filtrage.
 
+#### Filtre de Consigne Dual-Track (Boost + Atterrissage Quadratique)
+Géré par `SmartPISetpointManager` (`setpoint.py`), activé par configuration. Il agit sur `SP_for_P` (consigne vue par le terme P uniquement — l'intégrateur utilise toujours la consigne brute).
+
+**Machine à états (activation) :**
+- Activé si la hausse de consigne ≥ `SP_FILTER_ENABLE_THRESHOLD` ou si l'écart restant ≥ `SP_FILTER_ENABLE_THRESHOLD` (reprise après perturbation).
+- Désactivé si l'écart restant ≤ `SP_FILTER_DISABLE_THRESHOLD` (zone cœur atteinte).
+- Désactivé immédiatement sur toute baisse de consigne (économie d'énergie).
+
+**Phase BOOST** (`remaining > landing_zone`) :
+La consigne P = consigne brute → pleine puissance proportionnelle pour rejoindre la cible rapidement.
+
+**Phase LANDING** (`remaining ≤ landing_zone`) :
+$$SP_{for\_P} = T_{int} + \max\!\left(\frac{remaining^2}{landing\_zone},\ remaining \times SP\_LANDING\_ZONE\_MIN\_P\_FRACTION\right)$$
+Freinage quadratique avec plancher linéaire pour maintenir un terme P non nul en toute fin d'approche.
+
+**Zone d'atterrissage** :
+$$landing\_zone = \text{clamp}\!\left(a \cdot \frac{L_{cool}}{60} \cdot SP\_LANDING\_ZONE\_FACTOR,\ SP\_MIN,\ SP\_MAX\right)$$
+Elle s'adapte dynamiquement au gain thermique `a` et au temps mort de refroidissement $L_{cool}$.
+
 #### Near-Band Scheduling (Asymétrique & Auto-adaptatif)
 Dans une bande étroite autour de la consigne, les gains $K_p$ et $K_i$ sont réduits pour stabiliser la vanne.
 - **Asymétrie (Chauffage)** : La bande est plus large *en dessous* de la consigne (pour "atterrir" en douceur), mais reste serrée au-dessus pour réagir vite au dépassement.
@@ -248,7 +267,7 @@ Le code adopte une architecture **modulaire par composition** (pattern Façade).
 | `deadband.py` | `DeadbandManager` | Machine à états deadband/near-band, dimensionnement auto de la near-band |
 | `calibration.py` | `CalibrationManager` | Machine à états de la calibration forcée (COOL_DOWN → HEAT_UP → COOL_DOWN_FINAL) |
 | `governance.py` | `SmartPIGovernance` | Détermination du régime et décisions de gel (matrice de gouvernance) |
-| `setpoint.py` | `SmartPISetpointManager` | Filtre EMA asymétrique de consigne, détection de boost |
+| `setpoint.py` | `SmartPISetpointManager` | Filtre de consigne Dual-Track (Boost + atterrissage quadratique) |
 | `diagnostics.py` | `build_diagnostics()` | Construction du dictionnaire d'attributs pour l'UI |
 | `timestamp_utils.py` | — | Conversion monotonic ↔ wall-clock |
 
@@ -322,7 +341,7 @@ Une couche de migration (`_migrate_old_state_format`) assure la compatibilité a
 ```mermaid
 graph TD
     A[Heartbeat / Mesure T] --> B[SmartPI.calculate]
-    B --> SP[SetpointManager: Filtre EMA + Boost]
+    B --> SP[SetpointManager: Filtre Dual-Track + Boost]
     SP --> C{Phase Hystérésis ?}
     C -- Oui --> D[Controller: Logique ON/OFF]
     C -- Non --> DB[DeadbandManager: État deadband/near-band]
@@ -353,7 +372,7 @@ graph TD
 
 1. **Sundaresan k.R. and Krishnaswamy P.R.**, "Estimation of Time Delay Time Constant Parameters in Time, Frequency, and Laplace Domains", *Canadian Journal of Chemical Engineering*, 1978. (Méthode utilisée pour l'estimateur de temps mort)
 2. **Astrom K.J. and Hagglund T.**, "Advanced PID Control", ISA, 2006. (Concepts d'anti-windup, setpoint weighting et méthodes de réglage).
-3. **Theil-Sen Estimator**: Méthode de régression linéaire robuste insensible aux outliers (jusqu'à 29%), utilisée conceptuellement pour la validation du modèle linéaire.
+3. **OLS (Ordinary Least Squares)**: Estimateur de pente non biaisé utilisé pour le calcul de $\frac{dT_{int}}{dt}$ sur la fenêtre glissante. Complexité O(N), sans biais de phase. Le rejet des outliers physiques est délégué à `learn()` (seuil `max_abs_dT_per_min`).
 
 ## 7. Paramètres et Configuration Avancée
 

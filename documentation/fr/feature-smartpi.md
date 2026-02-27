@@ -138,6 +138,7 @@ Pour les utilisateurs avancés, l'entité climate expose des attributs détaill�
 | `learn_b_converged` | `true` si `b` est statistiquement convergé pour l'apprentissage de `a` |
 | `learn_a_blocked_by_b` | `true` si `a` est bloqué faute d'assez de mesures `b` (`learn_ok_count_b < 5`) |
 | `learn_last_reason` | Raison de la dernière tentative d'apprentissage (succès ou motif de rejet) |
+| `diag_dTdt_method` | Méthode utilisée pour l'estimation de dT/dt : `ols`, `low_amplitude`, `ols_fail`, `insufficient_samples`, etc. |
 | `error` | Écart Consigne - Température |
 | `u_ff` | Part de puissance "Feed-Forward" (anticipation météo) |
 | `ff_raw` | Puissance brute Feed-Forward avant mise à l'échelle (0.0 à 1.0) |
