@@ -266,6 +266,10 @@ DELTA_MIN_ON = 0.2         # °C
 EPISODE_MIN_DURATION_ON_S = 600   # 10 min
 EPISODE_MIN_DURATION_OFF_S = 900  # 15 min
 
+# Power coefficient of variation gate (Welford-based)
+U_CV_MAX = 0.30            # Maximum accepted CV of power over the learning window
+U_CV_MIN_MEAN = 0.05       # Minimum mean(u) to compute CV (avoids division by ~0)
+
 
 # --- SmartPI Near Band Defaults ---
 DEFAULT_NEAR_BAND_DEG = 0.40

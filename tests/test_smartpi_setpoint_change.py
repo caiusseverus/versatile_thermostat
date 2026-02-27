@@ -34,6 +34,11 @@ def test_smartpi_setpoint_change_continues_learning():
     assert smart_pi.learn_win_active
     assert "setpoint change" not in smart_pi.est.learn_last_reason
 
-    # Power transition (heater off) is what actually closes the window
-    smart_pi.update_learning(1.0, 18.0, 5.0, 0.0)  # OFF phase → u_active ≠ u_first
+    # Power transition: with CV guard, the first anomalous sample is accumulated
+    # (CV from 2 previous samples at u=1.0 is 0 → no trigger yet).
+    smart_pi.update_learning(1.0, 18.0, 5.0, 0.0)  # 1st anomalous: accumulates, no trigger
+    assert smart_pi.learn_win_active  # still open
+
+    # Second cycle at u=0.0: CV({1.0, 1.0, 0.0}) ≈ 0.86 >> 0.30 → triggers closure
+    smart_pi.update_learning(1.0, 18.0, 5.0, 0.0)
     assert not smart_pi.learn_win_active

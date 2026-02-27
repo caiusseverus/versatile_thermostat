@@ -348,8 +348,8 @@ async def test_smartpi_power_stability_abort():
     # Here dT=0 so it extends.
     assert "extending" in algo.est.learn_last_reason or "window" in algo.est.learn_last_reason
     
-    # 3. Next update with DIFFERENT power (0.6), same temp (dT=0 < MIN_ABS_DT)
-    # This should ABORT the window due to power instability (early submit not possible)
+    # 3. Next update with moderately different power (0.6 vs 0.5, CV≈0.07 < 0.30)
+    # With the CV guard, this should NOT abort the window.
     algo.update_learning(
         dt_min=10.0,
         current_temp=20.0,
@@ -357,9 +357,26 @@ async def test_smartpi_power_stability_abort():
         u_active=0.6,
         setpoint_changed=False
     )
-    
+
+    # Window must stay open: moderate PI modulation is now allowed
+    assert algo.learn_win_active is True
+
+    # 4. Inject extreme power values to drive CV >> 0.30 → window closes.
+    # After several samples at u=0.5/0.6, injecting u=0.0 then u=0.0 again
+    # raises CV({0.5,0.6,0.0,...}) >> 0.30.
+    for _ in range(4):
+        algo.update_learning(
+            dt_min=10.0,
+            current_temp=20.0,
+            ext_temp=10.0,
+            u_active=0.0,
+            setpoint_changed=False
+        )
+        if not algo.learn_win_active:
+            break
+
     assert algo.learn_win_active is False
-    assert "skip: power instability" in algo.est.learn_last_reason
+    assert "power instability" in algo.est.learn_last_reason
 
 @pytest.mark.asyncio
 async def test_smartpi_resume_from_off_resets_cycle():
