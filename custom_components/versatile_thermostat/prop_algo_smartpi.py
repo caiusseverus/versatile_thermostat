@@ -72,6 +72,7 @@ from .smartpi.const import (
     DEADBAND_ABOVE_C,
     AB_HISTORY_SIZE,
     AB_MIN_SAMPLES_A,
+    AB_MIN_SAMPLES_A_CONVERGED,
     AB_MIN_SAMPLES_B,
     DEFAULT_NEAR_BAND_DEG,
     DEFAULT_KP_NEAR_FACTOR,
@@ -356,26 +357,6 @@ class SmartPI(CycleManager):
             self.gain_scheduler.reset()
 
         _LOGGER.info("%s - SmartPI learning and history reset", self._name)
-
-    # ------------------------------
-    # Property Mappings (Component Redirection)
-    # ------------------------------
-
-    @property
-    def guard_cut_active(self) -> bool:
-        return self.guards.guard_cut_active
-
-    @property
-    def guard_cut_count(self) -> int:
-        return self.guards.guard_cut_count
-
-    @property
-    def guard_kick_active(self) -> bool:
-        return self.guards.guard_kick_active
-
-    @property
-    def guard_kick_count(self) -> int:
-        return self.guards.guard_kick_count
 
     @property
     def calibration_state(self) -> SmartPICalibrationPhase:
@@ -847,8 +828,11 @@ class SmartPI(CycleManager):
             return " ".join(parts)
 
         # Step 2: both deadtimes acquired, collecting initial emeas
-        if nb_a < AB_MIN_SAMPLES_A or nb_b < AB_MIN_SAMPLES_B:
-            return f"step2 - collecting emeas: A:{nb_a}/{AB_MIN_SAMPLES_A} B:{nb_b}/{AB_MIN_SAMPLES_B}"
+        b_converged = self.est.b_converged_for_a()
+        min_a = AB_MIN_SAMPLES_A_CONVERGED if b_converged else AB_MIN_SAMPLES_A
+        b_target = AB_HISTORY_SIZE if nb_b >= AB_MIN_SAMPLES_B else AB_MIN_SAMPLES_B
+        if nb_a < min_a or nb_b < AB_MIN_SAMPLES_B:
+            return f"step2 - collecting emeas: A:{nb_a}/{min_a} B:{nb_b}/{b_target}"
 
         # Step 3: full thermal model learning
         ok_a = self.est.learn_ok_count_a
