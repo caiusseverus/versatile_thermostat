@@ -53,10 +53,14 @@ class LearningWindowManager:
         self._u_int: float = 0.0
         self._t_int_s: float = 0.0
         self._u_first: float | None = None
-        
+
+        # Tracks the last published "extending" category ("dur", "amp", "dur+amp")
+        # so that learn_last_reason is only updated on category transitions.
+        self._last_extend_cat: str = ""
+
         # Learning start timestamp
         self._learning_start_date: Optional[datetime] = datetime.now()
-        
+
         # Skip learning cycles after resume from interruption
         self._learning_resume_ts: Optional[float] = None
 
@@ -120,6 +124,7 @@ class LearningWindowManager:
         self._u_int = 0.0
         self._t_int_s = 0.0
         self._u_first = None
+        self._last_extend_cat = ""
 
     def reset_all(self) -> None:
         """Reset all learning window state including timestamps."""
@@ -250,7 +255,6 @@ class LearningWindowManager:
                 "%s - setpoint changed, window continues (power transition guards)",
                 self._name
             )
-            estimator.learn_last_reason = "info: setpoint changed, window continues"
 
         # --- Governance gate (thermal domain: a/b learning) ---
         # During calibration, bypass governance to allow A/B learning
@@ -379,7 +383,6 @@ class LearningWindowManager:
             self._u_int = 0.0
             self._t_int_s = 0.0
             self._u_first = u_active
-            estimator.learn_last_reason = "learn: window start"
         else:
             # Check power consistency
             if (
@@ -474,12 +477,22 @@ class LearningWindowManager:
             amplitude_ok = abs_dT >= MIN_ABS_DT
 
             if (not duration_ok or not amplitude_ok) and window_dt_min < DT_MAX_MIN:
-                reason = []
-                if not duration_ok:
-                    reason.append(f"dur {self._t_int_s:.0f}/{min_dur_s}s")
-                if not amplitude_ok:
-                    reason.append(f"dT {abs_dT:.2f}/{MIN_ABS_DT}")
-                estimator.learn_last_reason = f"skip: extending ({', '.join(reason)})"
+                # Publish "extending" only on category transitions, and suppress the
+                # first 30 s of each new window so that learn() rejection / governance
+                # reasons remain visible to the user until accumulation is meaningful.
+                new_cat = (
+                    "dur+amp" if (not duration_ok and not amplitude_ok)
+                    else "dur" if not duration_ok
+                    else "amp"
+                )
+                if self._t_int_s >= 30.0 and new_cat != self._last_extend_cat:
+                    reason_parts = []
+                    if not duration_ok:
+                        reason_parts.append(f"dur {self._t_int_s:.0f}/{min_dur_s}s")
+                    if not amplitude_ok:
+                        reason_parts.append(f"dT {abs_dT:.2f}/{MIN_ABS_DT}")
+                    estimator.learn_last_reason = f"skip: extending ({', '.join(reason_parts)})"
+                    self._last_extend_cat = new_cat
                 return deadtime_skip_count_a, deadtime_skip_count_b  # Extend window
 
             # Timeout Logic
