@@ -54,10 +54,6 @@ class LearningWindowManager:
         self._t_int_s: float = 0.0
         self._u_first: float | None = None
 
-        # Tracks the last published "extending" category ("dur", "amp", "dur+amp")
-        # so that learn_last_reason is only updated on category transitions.
-        self._last_extend_cat: str = ""
-
         # Learning start timestamp
         self._learning_start_date: Optional[datetime] = datetime.now()
 
@@ -124,7 +120,6 @@ class LearningWindowManager:
         self._u_int = 0.0
         self._t_int_s = 0.0
         self._u_first = None
-        self._last_extend_cat = ""
 
     def reset_all(self) -> None:
         """Reset all learning window state including timestamps."""
@@ -476,24 +471,14 @@ class LearningWindowManager:
             duration_ok = self._t_int_s >= min_dur_s
             amplitude_ok = abs_dT >= MIN_ABS_DT
 
-            if (not duration_ok or not amplitude_ok) and window_dt_min < DT_MAX_MIN:
-                # Publish "extending" only on category transitions, and suppress the
-                # first 30 s of each new window so that learn() rejection / governance
-                # reasons remain visible to the user until accumulation is meaningful.
-                new_cat = (
-                    "dur+amp" if (not duration_ok and not amplitude_ok)
-                    else "dur" if not duration_ok
-                    else "amp"
-                )
-                if self._t_int_s >= 30.0 and new_cat != self._last_extend_cat:
-                    reason_parts = []
-                    if not duration_ok:
-                        reason_parts.append(f"dur {self._t_int_s:.0f}/{min_dur_s}s")
-                    if not amplitude_ok:
-                        reason_parts.append(f"dT {abs_dT:.2f}/{MIN_ABS_DT}")
-                    estimator.learn_last_reason = f"skip: extending ({', '.join(reason_parts)})"
-                    self._last_extend_cat = new_cat
-                return deadtime_skip_count_a, deadtime_skip_count_b  # Extend window
+            if not duration_ok and window_dt_min < DT_MAX_MIN:
+                # Still accumulating within the normal window: keep the previous reason.
+                return deadtime_skip_count_a, deadtime_skip_count_b
+
+            if not amplitude_ok and window_dt_min < DT_MAX_MIN:
+                # Minimum duration reached but dT still too small: genuine extension.
+                estimator.learn_last_reason = f"extending (dT {abs_dT:.3f}/{MIN_ABS_DT})"
+                return deadtime_skip_count_a, deadtime_skip_count_b
 
             # Timeout Logic
             if window_dt_min >= DT_MAX_MIN:
