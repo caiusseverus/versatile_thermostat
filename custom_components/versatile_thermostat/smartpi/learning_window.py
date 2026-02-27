@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Optional
 from .timestamp_utils import convert_monotonic_to_wall_ts, convert_wall_to_monotonic_ts
 
 from .const import (
+    AB_A_SOFT_GATE_MIN_B,
     DELTA_MIN,
     DT_MAX_MIN,
     EPISODE_MIN_DURATION_OFF_S,
@@ -419,11 +420,17 @@ class LearningWindowManager:
             self._u_mean = 0.0
             self._u_m2 = 0.0
             self._update_u_stats(u_active)
-            estimator.learn_last_reason = (
-                "collecting A" if u_active > U_ON_MIN
-                else "collecting B" if u_active < U_OFF_MAX
-                else "collecting"
-            )
+            if u_active > U_ON_MIN and estimator.learn_ok_count_b < AB_A_SOFT_GATE_MIN_B:
+                estimator.learn_last_reason = (
+                    f"collecting A (waiting for B: "
+                    f"{estimator.learn_ok_count_b}/{AB_A_SOFT_GATE_MIN_B})"
+                )
+            else:
+                estimator.learn_last_reason = (
+                    "collecting A" if u_active > U_ON_MIN
+                    else "collecting B" if u_active < U_OFF_MAX
+                    else "collecting"
+                )
         else:
             # Check power consistency via coefficient of variation (Welford)
             cv = self._u_cv
