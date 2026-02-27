@@ -101,9 +101,9 @@ The algorithm accumulates data (T_int, T_ext, Power) continuously. A learning at
 
 Once these conditions are met, the algorithm "closes" the window and launches identification.
 
-#### Robustness (Theil-Sen & Median+MAD)
+#### Robustness (OLS & Median+MAD)
 On the identified window:
-1.  **Slope calculation**: Using the **Theil-Sen** estimator to extract the derivative $\frac{dT_{int}}{dt}$ robustly against noise.
+1.  **Slope calculation**: Using **OLS** (Ordinary Least Squares) regression on raw data to extract the derivative $\frac{dT_{int}}{dt}$. Rejection of physically unreasonable slopes is handled by `learn()` via the `max_abs_dT_per_min` threshold.
 2.  **Estimation of $a$ and $b$**:
     - If $u \approx 0$ (Cooling): $b$ is estimated.
     - If $u > 0$ (Heating): $a$ is estimated (using the current $b$).
@@ -184,6 +184,25 @@ $$ e_p = \beta \cdot T_{setpoint} - T_{int} $$
 
 With $\beta = 0$ or a low value, this transforms the P action into feedback on measurement alone, softening the step response. In Smart-PI, implicit weighting is used via *Setpoint Boost* and filtering.
 
+#### Dual-Track Setpoint Filter (Boost + Quadratic Landing)
+Managed by `SmartPISetpointManager` (`setpoint.py`), enabled by configuration. It acts on `SP_for_P` (the setpoint seen by the P term only — the integrator always uses the raw setpoint).
+
+**State machine (activation):**
+- Activated when setpoint rise ≥ `SP_FILTER_ENABLE_THRESHOLD` or remaining gap ≥ `SP_FILTER_ENABLE_THRESHOLD` (disturbance recovery).
+- Deactivated when remaining gap ≤ `SP_FILTER_DISABLE_THRESHOLD` (core zone reached).
+- Immediately deactivated on any setpoint drop (energy savings).
+
+**BOOST phase** (`remaining > landing_zone`):
+`SP_for_P` = raw setpoint → full proportional power to reach the target quickly.
+
+**LANDING phase** (`remaining ≤ landing_zone`):
+$$SP_{for\_P} = T_{int} + \max\!\left(\frac{remaining^2}{landing\_zone},\ remaining \times SP\_LANDING\_ZONE\_MIN\_P\_FRACTION\right)$$
+Quadratic braking with a linear floor to maintain a non-zero P contribution during the final approach.
+
+**Landing zone:**
+$$landing\_zone = \text{clamp}\!\left(a \cdot \frac{L_{cool}}{60} \cdot SP\_LANDING\_ZONE\_FACTOR,\ SP\_MIN,\ SP\_MAX\right)$$
+Adapts dynamically to the thermal gain `a` and the cooling dead time $L_{cool}$.
+
 #### Near-Band Scheduling (Asymmetric & Auto-adaptive)
 Within a narrow band around the setpoint, gains $K_p$ and $K_i$ are reduced to stabilize the valve.
 - **Asymmetry (Heating)**: The band is wider *below* the setpoint (for a "soft landing"), but remains tight above to react quickly to overshoot.
@@ -251,7 +270,7 @@ The code adopts a **modular composition architecture** (Facade pattern). The orc
 | `deadband.py` | `DeadbandManager` | Deadband/near-band state machine, auto near-band sizing |
 | `calibration.py` | `CalibrationManager` | Forced calibration state machine (COOL_DOWN → HEAT_UP → COOL_DOWN_FINAL) |
 | `governance.py` | `SmartPIGovernance` | Regime determination and freeze decisions (governance matrix) |
-| `setpoint.py` | `SmartPISetpointManager` | Asymmetric EMA setpoint filter, boost detection |
+| `setpoint.py` | `SmartPISetpointManager` | Dual-Track setpoint filter (Boost + quadratic landing) |
 | `diagnostics.py` | `build_diagnostics()` | UI attribute dictionary construction |
 | `timestamp_utils.py` | — | Monotonic ↔ wall-clock conversion |
 
@@ -325,7 +344,7 @@ A migration layer (`_migrate_old_state_format`) ensures compatibility with the o
 ```mermaid
 graph TD
     A[Heartbeat / T Measurement] --> B[SmartPI.calculate]
-    B --> SP[SetpointManager: EMA Filter + Boost]
+    B --> SP[SetpointManager: Dual-Track Filter + Boost]
     SP --> C{Hysteresis Phase?}
     C -- Yes --> D[Controller: ON/OFF Logic]
     C -- No --> DB[DeadbandManager: Deadband/near-band state]
@@ -356,7 +375,7 @@ graph TD
 
 1. **Sundaresan K.R. and Krishnaswamy P.R.**, "Estimation of Time Delay Time Constant Parameters in Time, Frequency, and Laplace Domains", *Canadian Journal of Chemical Engineering*, 1978. (Method used for the dead time estimator)
 2. **Astrom K.J. and Hagglund T.**, "Advanced PID Control", ISA, 2006. (Anti-windup concepts, setpoint weighting, and tuning methods).
-3. **Theil-Sen Estimator**: Robust linear regression method insensitive to outliers (up to 29%), used conceptually for linear model validation.
+3. **OLS (Ordinary Least Squares)**: Unbiased slope estimator used to compute $\frac{dT_{int}}{dt}$ over the sliding window. O(N) complexity, no phase bias. Physical outlier rejection is delegated to `learn()` via the `max_abs_dT_per_min` threshold.
 
 ## 7. Parameters and Advanced Configuration
 

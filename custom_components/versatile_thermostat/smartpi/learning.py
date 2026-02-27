@@ -294,7 +294,7 @@ class ABEstimator:
     
     Model: dT/dt = a*u - b*(T_int - T_ext)
     
-    1. Theil-Sen is used for robust dT/dt calculation over a sliding window.
+    1. OLS is used for dT/dt calculation over a sliding window.
     2. Median + MAD is used for robust a and b parameter estimation from history.
     """
 
@@ -370,25 +370,19 @@ class ABEstimator:
         return list(history)
 
     @staticmethod
-    def _theil_sen_slope(x: list[float], y: list[float]) -> float | None:
-        """Robust slope estimation using Theil-Sen estimator (Median of slopes)."""
+    def _ols_slope(x: list[float], y: list[float]) -> float | None:
+        """Ordinary Least Squares slope estimator."""
         n = len(x)
         if n < 2:
             return None
-        
-        slopes = []
-        # O(N^2) but N is small (ticket 6-30 points)
-        for i in range(n):
-            for j in range(i + 1, n):
-                dx = x[j] - x[i]
-                if dx != 0:
-                    slope = (y[j] - y[i]) / dx
-                    slopes.append(slope)
-        
-        if not slopes:
+        sx = sum(x)
+        sy = sum(y)
+        sxx = sum(xi * xi for xi in x)
+        sxy = sum(xi * yi for xi, yi in zip(x, y))
+        denom = n * sxx - sx * sx
+        if abs(denom) < 1e-15:
             return None
-            
-        return statistics.median(slopes)
+        return (n * sxy - sx * sy) / denom
 
     @staticmethod
     def robust_dTdt_per_min(
@@ -443,38 +437,22 @@ class ABEstimator:
             samples_sorted = samples_trimmed
 
         x = [p[0] for p in samples_sorted]
-        y_raw = [p[1] for p in samples_sorted]
-        
-        # 0. Light EMA Smoothing to counter sensor quantization (staircase effect)
-        # alpha=0.3 provides a gentle smoothing without adding too much phase lag
-        alpha = 0.3
-        y = []
-        current_ema = y_raw[0]
-        for val in y_raw:
-            current_ema = alpha * val + (1 - alpha) * current_ema
-            y.append(current_ema)
-        
-        # 1. Amplitude check
+        y = [p[1] for p in samples_sorted]
+
+        # Amplitude check
         amp = max(y) - min(y)
         if amp < DT_DERIVATIVE_MIN_ABS:
             return None, "low_amplitude", len(samples_sorted)
 
-        # 2. Minimum slope magnitude check (prevent noise/flat learning)
-        # We need a rough estimate of the window duration
-        dt_min_window = (x[-1] - x[0]) / 60.0
-
-        # 3. Theil-Sen
-        slope_sec = ABEstimator._theil_sen_slope(x, y)
+        # OLS slope estimation
+        slope_sec = ABEstimator._ols_slope(x, y)
         if slope_sec is None:
-            return None, "theil_sen_fail", len(samples_sorted)
-             
+            return None, "ols_fail", len(samples_sorted)
+
         slope_min = slope_sec * 60.0
-        
-        # Clamp result to physically reasonable values for HVAC (-0.35 to +0.35 C/min)
-        # This prevents wild values from exploding the estimator
-        slope_min = clamp(slope_min, -0.35, 0.35)
-        
-        return slope_min, "theil_sen", len(samples_sorted)
+
+        # Outlier rejection is handled by learn() via max_abs_dT_per_min
+        return slope_min, "ols", len(samples_sorted)
 
     # ---------- Main learning ----------
 
