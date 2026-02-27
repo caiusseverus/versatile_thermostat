@@ -118,5 +118,6 @@ htmlcov
 .venv
 
 .agent
+mcp.json
 
 dev_tests/
