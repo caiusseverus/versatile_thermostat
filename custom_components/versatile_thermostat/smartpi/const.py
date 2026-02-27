@@ -253,18 +253,15 @@ AB_B_CONVERGENCE_MIN_BHIST: int = 5
 AB_A_SOFT_GATE_MIN_B: int = 5
 
 # --- SmartPI Learning Window Constants ---
-# Learning requires at least one full cycle (measured by _cycle_min)
-DT_MAX_MIN = 120
-MIN_ABS_DT = 0.03      # °C
+# Absolute timeout for a learning window (both A and B).
+# The window extends as long as the OLS slope is not yet robust, up to this limit.
+DT_MAX_MIN = 240
+MIN_ABS_DT = 0.03      # °C  (reference value; not used as a gate in learning_window)
 DELTA_MIN = 0.2        # °C (Matches DELTA_MIN_ON)
 U_OFF_MAX = 0.05
 U_ON_MIN = 0.20
 DELTA_MIN_OFF = 0.5        # °C
 DELTA_MIN_ON = 0.2         # °C
-
-# Episode minimum durations for learning
-EPISODE_MIN_DURATION_ON_S = 600   # 10 min
-EPISODE_MIN_DURATION_OFF_S = 900  # 15 min
 
 # Power coefficient of variation gate (Welford-based)
 U_CV_MAX = 0.30            # Maximum accepted CV of power over the learning window

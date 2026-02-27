@@ -85,6 +85,7 @@ async def test_smartpi_math_with_mocked_time(hass: HomeAssistant):
             minimal_deactivation_delay=0
         )
         algo.est = MagicMock()
+        algo.est.learn_ok_count_b = 0  # must be int, not MagicMock, for '<' comparison
         # Simulate deadtimes already learned so the bootstrap gate does not block A/B collection
         algo.dt_est.deadtime_heat_reliable = True
         algo.dt_est.deadtime_heat_s = 30.0
@@ -118,7 +119,12 @@ async def test_smartpi_math_with_mocked_time(hass: HomeAssistant):
         # minimal dt > 0.001 min. 0.001 min = 0.06 sec.
         # Let's use 10 sec = 0.16 min.
         mock_time.return_value = 1010.0
-        
+
+        # Clear any pre-built history so the slope gate finds nothing on the first
+        # tick and keeps the window open (extending).  The real history for Case 1
+        # submission is rebuilt below (lines ~138-144) before the second call.
+        algo.dt_est._tin_history.clear()
+
         algo.update_learning(
             dt_min=10.0/60.0, # 10 sec
             current_temp=20.0, # minimal change
@@ -129,7 +135,7 @@ async def test_smartpi_math_with_mocked_time(hass: HomeAssistant):
         assert algo.learn_win_active is True
         assert algo.learn_T_int_start == 20.0
         
-        # Advance time by 20 mins (1200s) to exceed EPISODE_MIN_DURATION_OFF_S (15m)
+        # Advance time by 20 mins (1200s); tin_history built below provides enough samples
         mock_time.return_value = 2200.0
         
         # End cycle: Temp dropped to 19.0 over 20 mins

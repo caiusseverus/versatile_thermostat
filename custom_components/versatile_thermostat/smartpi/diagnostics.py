@@ -13,8 +13,7 @@ from typing import Any, Dict, TYPE_CHECKING
 from .const import (
     AB_A_SOFT_GATE_MIN_B,
     SmartPIPhase,
-    EPISODE_MIN_DURATION_ON_S,
-    EPISODE_MIN_DURATION_OFF_S,
+    DT_MAX_MIN,
     U_ON_MIN,
     AB_HISTORY_SIZE,
     clamp,
@@ -80,7 +79,7 @@ def build_diagnostics(algo: SmartPI, debug_mode: bool = False) -> Dict[str, Any]
         # Learning metadata
         "learning_start_dt": algo._learning_start_date,
         "learn_progress_percent": (
-            round((algo.learn_t_int_s / (EPISODE_MIN_DURATION_ON_S if algo.learn_u_int / max(algo.learn_t_int_s, 1) > U_ON_MIN else EPISODE_MIN_DURATION_OFF_S)) * 100, 1)
+            round((algo.learn_t_int_s / (DT_MAX_MIN * 60)) * 100, 1)
             if algo.learn_win_active
             else 0
         ),
@@ -88,7 +87,7 @@ def build_diagnostics(algo: SmartPI, debug_mode: bool = False) -> Dict[str, Any]
         "learn_u_cv": round(algo.learn_win._u_cv, 3) if algo.learn_win_active else None,
         "learn_u_std": round(algo.learn_win._u_std, 4) if algo.learn_win_active else None,
         "learn_time_remaining": (
-            round(max(0, (EPISODE_MIN_DURATION_ON_S if algo.learn_u_int / max(algo.learn_t_int_s, 1) > U_ON_MIN else EPISODE_MIN_DURATION_OFF_S) - algo.learn_t_int_s), 0)
+            round(max(0, DT_MAX_MIN * 60 - algo.learn_t_int_s), 0)
             if algo.learn_win_active
             else None
         ),
