@@ -17,6 +17,8 @@ from .const import (
     EPISODE_MIN_DURATION_OFF_S,
     EPISODE_MIN_DURATION_ON_S,
     MIN_ABS_DT,
+    U_CV_MAX,
+    U_CV_MIN_MEAN,
     U_OFF_MAX,
     U_ON_MIN,
     clamp,
@@ -53,6 +55,11 @@ class LearningWindowManager:
         self._u_int: float = 0.0
         self._t_int_s: float = 0.0
         self._u_first: float | None = None
+
+        # Power variance tracking (Welford online algorithm)
+        self._u_count: int = 0
+        self._u_mean: float = 0.0
+        self._u_m2: float = 0.0      # Sum of squared differences from the mean
 
         # Learning start timestamp
         self._learning_start_date: Optional[datetime] = datetime.now()
@@ -120,6 +127,9 @@ class LearningWindowManager:
         self._u_int = 0.0
         self._t_int_s = 0.0
         self._u_first = None
+        self._u_count = 0
+        self._u_mean = 0.0
+        self._u_m2 = 0.0
 
     def reset_all(self) -> None:
         """Reset all learning window state including timestamps."""
@@ -136,6 +146,32 @@ class LearningWindowManager:
             ts: Monotonic timestamp until which learning should be paused.
         """
         self._learning_resume_ts = ts
+
+    # --------------------------------------------------------------------------
+    # Power variance tracking (Welford online algorithm)
+    # --------------------------------------------------------------------------
+
+    def _update_u_stats(self, u: float) -> None:
+        """Update running mean/variance of u using Welford's online algorithm."""
+        self._u_count += 1
+        delta = u - self._u_mean
+        self._u_mean += delta / self._u_count
+        delta2 = u - self._u_mean
+        self._u_m2 += delta * delta2
+
+    @property
+    def _u_std(self) -> float:
+        """Return current standard deviation of u in the window."""
+        if self._u_count < 2:
+            return 0.0
+        return (self._u_m2 / (self._u_count - 1)) ** 0.5
+
+    @property
+    def _u_cv(self) -> float:
+        """Return coefficient of variation of u in the window."""
+        if self._u_mean < U_CV_MIN_MEAN:
+            return 0.0  # Mean too low, CV not meaningful
+        return self._u_std / self._u_mean
 
     # --------------------------------------------------------------------------
     # Persistence methods
@@ -378,32 +414,33 @@ class LearningWindowManager:
             self._u_int = 0.0
             self._t_int_s = 0.0
             self._u_first = u_active
+            # Initialize power variance tracking and record first sample
+            self._u_count = 0
+            self._u_mean = 0.0
+            self._u_m2 = 0.0
+            self._update_u_stats(u_active)
             estimator.learn_last_reason = (
                 "collecting A" if u_active > U_ON_MIN
                 else "collecting B" if u_active < U_OFF_MAX
                 else "collecting"
             )
         else:
-            # Check power consistency
-            if (
-                self._u_first is not None
-                and abs(u_active - self._u_first) > 1e-3
-            ):
-                # Power transition detected (e.g. hysteresis phase boundary).
-                # Attempt early submission with accumulated data instead of
-                # discarding the window.
+            # Check power consistency via coefficient of variation (Welford)
+            cv = self._u_cv
+            if cv > U_CV_MAX:
+                # Power variation too high: regime change detected, not PI modulation.
                 dT_early = current_temp - self._T_int_start
                 abs_dT_early = abs(dT_early)
                 delta_T_early = abs(self._T_int_start - self._T_ext_start)
                 if abs_dT_early >= MIN_ABS_DT and delta_T_early >= DELTA_MIN:
                     _LOGGER.debug(
-                        "%s - power transition: early submit (%.0fs, dT=%.3f)",
-                        self._name, self._t_int_s, dT_early,
+                        "%s - power CV %.2f > %.2f: early submit (%.0fs, dT=%.3f)",
+                        self._name, cv, U_CV_MAX, self._t_int_s, dT_early,
                     )
                     early_submit = True
                 else:
                     estimator.learn_skip_count += 1
-                    estimator.learn_last_reason = "skip: power instability"
+                    estimator.learn_last_reason = f"skip: power instability (CV={cv:.2f})"
                     self.reset()
                     return deadtime_skip_count_a, deadtime_skip_count_b
             else:
@@ -416,7 +453,8 @@ class LearningWindowManager:
             abs_dT = abs(dT)
             delta_T = self._T_int_start - self._T_ext_start
         else:
-            # Accumulate
+            # Accumulate current sample into power stats and energy integral
+            self._update_u_stats(u_active)
             self._u_int += clamp(u_active, 0.0, 1.0) * dt_s
             self._t_int_s += dt_s
 

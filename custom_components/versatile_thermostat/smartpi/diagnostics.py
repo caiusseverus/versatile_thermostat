@@ -85,6 +85,8 @@ def build_diagnostics(algo: SmartPI, debug_mode: bool = False) -> Dict[str, Any]
             else 0
         ),
         "learn_u_avg": round(algo.learn_u_int / max(algo.learn_t_int_s, 1.0), 3) if algo.learn_win_active else None,
+        "learn_u_cv": round(algo.learn_win._u_cv, 3) if algo.learn_win_active else None,
+        "learn_u_std": round(algo.learn_win._u_std, 4) if algo.learn_win_active else None,
         "learn_time_remaining": (
             round(max(0, (EPISODE_MIN_DURATION_ON_S if algo.learn_u_int / max(algo.learn_t_int_s, 1) > U_ON_MIN else EPISODE_MIN_DURATION_OFF_S) - algo.learn_t_int_s), 0)
             if algo.learn_win_active
