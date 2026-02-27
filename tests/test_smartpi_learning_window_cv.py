@@ -22,6 +22,7 @@ def _make_estimator():
     est.learn_skip_count = 0
     est.learn_last_reason = ""
     est.learn_ok_count = 0
+    est.learn_ok_count_b = 0  # must be int, not MagicMock, for '<' comparison
     return est
 
 
@@ -312,7 +313,8 @@ def test_learning_window_wide_modulation_limit():
 
     base_now = _time.monotonic()
     # Uniform sweep [0.28, 0.42] — CV ≈ 0.13 < 0.30
-    # 9 cycles × 1 min = 540s < EPISODE_MIN_DURATION_ON_S (600s) to avoid normal submit
+    # 9 cycles × 1 min; dt_est.tin_history is empty so robust_dTdt_per_min returns None,
+    # the slope gate keeps the window open (extending) rather than submitting.
     powers = [0.28, 0.30, 0.32, 0.35, 0.38, 0.40, 0.42, 0.40, 0.37]
 
     for i, u in enumerate(powers):

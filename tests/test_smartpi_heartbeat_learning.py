@@ -4,10 +4,6 @@ from unittest.mock import MagicMock, patch
 import time
 from custom_components.versatile_thermostat.prop_algo_smartpi import SmartPI
 from custom_components.versatile_thermostat.smartpi.learning import ABEstimator
-from custom_components.versatile_thermostat.smartpi.const import (
-    EPISODE_MIN_DURATION_ON_S,
-    EPISODE_MIN_DURATION_OFF_S,
-)
 from custom_components.versatile_thermostat.vtherm_hvac_mode import VThermHvacMode_HEAT
 
 def test_heartbeat_accumulation():
@@ -67,39 +63,33 @@ def test_heartbeat_accumulation():
     assert smartpi.learn_t_int_s > first_duration
     assert smartpi.learn_win_active
 
-def test_heartbeat_learning_trigger_on_duration():
-    """Verify that learning triggers when duration threshold is met."""
+def test_heartbeat_learning_trigger_on_slope_quality():
+    """Verify that learning submits once OLS slope is robust."""
     smartpi = SmartPI(hass=MagicMock(), cycle_min=10, minimal_activation_delay=0, minimal_deactivation_delay=0, name="TestHB_Trigger")
     # Simulate deadtimes already learned so the bootstrap gate does not block A/B collection
     smartpi.dt_est.deadtime_heat_reliable = True
     smartpi.dt_est.deadtime_heat_s = 30.0
     smartpi.dt_est.deadtime_cool_reliable = True
     smartpi.dt_est.deadtime_cool_s = 30.0
+    smartpi._t_heat_episode_start = None
+    smartpi._t_cool_episode_start = None
+    smartpi.learn_win.set_learning_resume_ts(None)
 
-    # Cheat: set history manually so robustness checks pass
-    smartpi.dt_est._tin_history = [(time.monotonic() - i*60, 20.0 - i*0.01) for i in range(20)]
-    
-    # Force minimal duration to something small for testing if possible?
-    # No, constants are imported. We simulate time passing.
-    
-    target_dur = EPISODE_MIN_DURATION_ON_S + 60 # 11 mins
-    
-    # Start window
-    smartpi.update_learning(1.0, 19.0, 10.0, 1.0) # 1 min, ON
-    assert smartpi.learn_win_active
-    
-    # Advance time to near completion
-    smartpi.update_learning(target_dur / 60.0, 20.0, 10.0, 1.0) # Add remaining time
-    
-    # Should have triggered learning and reset
+    # Pre-populate tin_history with 20 samples, 1 min apart, rising temperature.
+    # (i=0 = oldest = 19 min ago, i=19 = most recent = now)
+    # Amplitude = 0.95°C >> DT_DERIVATIVE_MIN_ABS (0.03°C); slope ≈ +0.05°C/min.
+    base_now = time.monotonic()
+    smartpi.dt_est._tin_history = [
+        (base_now - (19 - i) * 60, 19.0 + i * 0.05) for i in range(20)
+    ]
+
+    # Single call with 20-min window: start_ts goes back 20 min, all 20 samples in range.
+    # The slope gate should pass immediately and the window should submit.
+    smartpi.update_learning(20.0, 20.0, 10.0, 1.0)
+
+    # Slope is robust: window must have submitted and reset.
     assert not smartpi.learn_win_active
-    # Check if learn was called (learn_ok_count increments if successful)
-    # We might fail on robustness if data is dummy, but learn_last_reason should indicate attempt
     assert "learned" in smartpi.est.learn_last_reason or "skip" in smartpi.est.learn_last_reason
-    
-    # If using dummy data, likely "learned a (Median)" or similar if slope consistent
-    # Or "skip" if robustness fails.
-    # But main point is window reset -> attempt made.
 
 def test_learning_continues_on_setpoint_change():
     """Verify window is NOT reset on setpoint change — it continues.

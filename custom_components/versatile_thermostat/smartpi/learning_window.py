@@ -15,9 +15,6 @@ from .const import (
     AB_A_SOFT_GATE_MIN_B,
     DELTA_MIN,
     DT_MAX_MIN,
-    EPISODE_MIN_DURATION_OFF_S,
-    EPISODE_MIN_DURATION_ON_S,
-    MIN_ABS_DT,
     U_CV_MAX,
     U_CV_MIN_MEAN,
     U_OFF_MAX,
@@ -435,19 +432,26 @@ class LearningWindowManager:
             # Check power consistency via coefficient of variation (Welford)
             cv = self._u_cv
             if cv > U_CV_MAX:
-                # Power variation too high: regime change detected, not PI modulation.
-                dT_early = current_temp - self._T_int_start
-                abs_dT_early = abs(dT_early)
+                # Regime change detected: window must close now.
+                # Try OLS slope on collected samples before deciding to submit or abandon.
+                u_eff_win = self._u_int / max(self._t_int_s, 1e-9)
+                trim_frac = 0.10 if u_eff_win < U_OFF_MAX else 0.0
+                early_samples = [p for p in dt_est.tin_history if p[0] >= self._start_ts]
+                slope_early, method_early, _ = ABEstimator.robust_dTdt_per_min(
+                    early_samples, trim_start_frac=trim_frac
+                )
                 delta_T_early = abs(self._T_int_start - self._T_ext_start)
-                if abs_dT_early >= MIN_ABS_DT and delta_T_early >= DELTA_MIN:
+                if slope_early is not None and delta_T_early >= DELTA_MIN:
                     _LOGGER.debug(
-                        "%s - power CV %.2f > %.2f: early submit (%.0fs, dT=%.3f)",
-                        self._name, cv, U_CV_MAX, self._t_int_s, dT_early,
+                        "%s - power CV %.2f > %.2f: early submit via slope (%.0fs)",
+                        self._name, cv, U_CV_MAX, self._t_int_s,
                     )
                     early_submit = True
                 else:
                     estimator.learn_skip_count += 1
-                    estimator.learn_last_reason = f"skip: power instability (CV={cv:.2f})"
+                    estimator.learn_last_reason = (
+                        f"skip: power instability (CV={cv:.2f}, {method_early})"
+                    )
                     self.reset()
                     return deadtime_skip_count_a, deadtime_skip_count_b
             else:
@@ -472,19 +476,11 @@ class LearningWindowManager:
             abs_dT = abs(dT)
             delta_T = self._T_int_start - self._T_ext_start
 
-            # Calculate preliminary u_eff for duration check
+            # Calculate preliminary u_eff for direction check
             if self._t_int_s > 0.0:
                 u_eff_pre = self._u_int / self._t_int_s
             else:
                 u_eff_pre = 0.0
-
-            # Determine min duration based on power state
-            if u_eff_pre > U_ON_MIN:
-                min_dur_s = EPISODE_MIN_DURATION_ON_S
-            elif u_eff_pre < U_OFF_MAX:
-                min_dur_s = EPISODE_MIN_DURATION_OFF_S
-            else:
-                min_dur_s = EPISODE_MIN_DURATION_ON_S
 
             # --- Extension Checks ---
             if abs(delta_T) < DELTA_MIN:
@@ -524,26 +520,28 @@ class LearningWindowManager:
                     else "collecting"
                 )
 
-            # Extend if duration not met or dT too small (and not timed out)
-            duration_ok = self._t_int_s >= min_dur_s
-            amplitude_ok = abs_dT >= MIN_ABS_DT
+            # Try slope quality: submit if robust, extend if not, timeout if limit reached.
+            # robust_dTdt_per_min enforces its own internal guards (>=6 samples, amplitude).
+            trim_frac = 0.10 if u_eff_pre < U_OFF_MAX else 0.0
+            relevant_samples = [p for p in dt_est.tin_history if p[0] >= self._start_ts]
+            slope_val, method, n_samples = ABEstimator.robust_dTdt_per_min(
+                relevant_samples, trim_start_frac=trim_frac
+            )
 
-            if not duration_ok and window_dt_min < DT_MAX_MIN:
-                # Still accumulating within the normal window: keep the previous reason.
+            if slope_val is not None:
+                # Slope is robust: proceed to submission.
+                pass
+            elif window_dt_min < DT_MAX_MIN:
+                # Signal not yet robust: extend window.
+                estimator.learn_last_reason = (
+                    f"extending: slope not robust ({method}, n={n_samples})"
+                )
                 return deadtime_skip_count_a, deadtime_skip_count_b
-
-            if not amplitude_ok and window_dt_min < DT_MAX_MIN:
-                # Minimum duration reached but dT still too small: genuine extension.
-                estimator.learn_last_reason = f"extending (dT {abs_dT:.3f}/{MIN_ABS_DT})"
+            else:
+                # Absolute timeout reached with no valid slope: abandon.
+                self.reset()
+                estimator.learn_last_reason = f"skip: window timeout ({method})"
                 return deadtime_skip_count_a, deadtime_skip_count_b
-
-            # Timeout Logic
-            if window_dt_min >= DT_MAX_MIN:
-                if not amplitude_ok:
-                    self.reset()
-                    estimator.learn_last_reason = "skip: window timeout (dT too small)"
-                    return deadtime_skip_count_a, deadtime_skip_count_b
-                # If amplitude OK but duration short (shouldn't happen), proceed
 
         if self._t_int_s <= 0.0:
             self.reset()
