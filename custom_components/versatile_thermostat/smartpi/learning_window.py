@@ -516,6 +516,13 @@ class LearningWindowManager:
                         "skip: B flywheel timeout" if b_wrong_dir else "skip: A deadtime timeout"
                     )
                     return deadtime_skip_count_a, deadtime_skip_count_b
+            else:
+                # Direction is correct: update collection state
+                estimator.learn_last_reason = (
+                    "collecting A" if u_eff_pre > U_ON_MIN
+                    else "collecting B" if u_eff_pre < U_OFF_MAX
+                    else "collecting"
+                )
 
             # Extend if duration not met or dT too small (and not timed out)
             duration_ok = self._t_int_s >= min_dur_s
