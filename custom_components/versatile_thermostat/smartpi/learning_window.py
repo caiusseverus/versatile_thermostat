@@ -378,6 +378,11 @@ class LearningWindowManager:
             self._u_int = 0.0
             self._t_int_s = 0.0
             self._u_first = u_active
+            estimator.learn_last_reason = (
+                "collecting A" if u_active > U_ON_MIN
+                else "collecting B" if u_active < U_OFF_MAX
+                else "collecting"
+            )
         else:
             # Check power consistency
             if (
