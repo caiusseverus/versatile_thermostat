@@ -65,6 +65,9 @@ class LearningWindowManager:
         # Skip learning cycles after resume from interruption
         self._learning_resume_ts: Optional[float] = None
 
+        # Track last published extending method to suppress duplicate messages
+        self._last_extend_method: str = ""
+
     # --------------------------------------------------------------------------
     # Properties for diagnostic access
     # --------------------------------------------------------------------------
@@ -128,6 +131,7 @@ class LearningWindowManager:
         self._u_count = 0
         self._u_mean = 0.0
         self._u_m2 = 0.0
+        self._last_extend_method = ""
 
     def reset_all(self) -> None:
         """Reset all learning window state including timestamps."""
@@ -417,17 +421,6 @@ class LearningWindowManager:
             self._u_mean = 0.0
             self._u_m2 = 0.0
             self._update_u_stats(u_active)
-            if u_active > U_ON_MIN and estimator.learn_ok_count_b < AB_A_SOFT_GATE_MIN_B:
-                estimator.learn_last_reason = (
-                    f"collecting A (waiting for B: "
-                    f"{estimator.learn_ok_count_b}/{AB_A_SOFT_GATE_MIN_B})"
-                )
-            else:
-                estimator.learn_last_reason = (
-                    "collecting A" if u_active > U_ON_MIN
-                    else "collecting B" if u_active < U_OFF_MAX
-                    else "collecting"
-                )
         else:
             # Check power consistency via coefficient of variation (Welford)
             cv = self._u_cv
@@ -512,14 +505,6 @@ class LearningWindowManager:
                         "skip: B flywheel timeout" if b_wrong_dir else "skip: A deadtime timeout"
                     )
                     return deadtime_skip_count_a, deadtime_skip_count_b
-            else:
-                # Direction is correct: update collection state
-                estimator.learn_last_reason = (
-                    "collecting A" if u_eff_pre > U_ON_MIN
-                    else "collecting B" if u_eff_pre < U_OFF_MAX
-                    else "collecting"
-                )
-
             # Try slope quality: submit if robust, extend if not, timeout if limit reached.
             # robust_dTdt_per_min enforces its own internal guards (>=6 samples, amplitude).
             trim_frac = 0.10 if u_eff_pre < U_OFF_MAX else 0.0
@@ -533,9 +518,12 @@ class LearningWindowManager:
                 pass
             elif window_dt_min < DT_MAX_MIN:
                 # Signal not yet robust: extend window.
-                estimator.learn_last_reason = (
-                    f"extending: slope not robust ({method}, n={n_samples})"
-                )
+                # Only publish on method transition to keep rejection reasons visible.
+                if method != self._last_extend_method:
+                    estimator.learn_last_reason = (
+                        f"extending: slope not robust ({method}, n={n_samples})"
+                    )
+                    self._last_extend_method = method
                 return deadtime_skip_count_a, deadtime_skip_count_b
             else:
                 # Absolute timeout reached with no valid slope: abandon.
