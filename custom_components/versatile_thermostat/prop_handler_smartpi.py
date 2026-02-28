@@ -161,7 +161,7 @@ class SmartPIHandler:
             guard_cut_action = algo.guards.check_guard_cut(
                 current_temp=current_temp,
                 target_temp=t.target_temperature,
-                near_band_above=algo._near_band_above_deg,
+                near_band_above=getattr(algo, "_near_band_above_deg", None),
                 in_near_band=algo.in_near_band,
                 is_device_active=any(under.is_device_active for under in t.underlyings),
                 hvac_mode=t.vtherm_hvac_mode,
@@ -175,7 +175,7 @@ class SmartPIHandler:
             guard_kick_action = algo.guards.check_guard_kick(
                 current_temp=current_temp,
                 target_temp=t.target_temperature,
-                near_band_below=algo._near_band_below_deg,
+                near_band_below=getattr(algo, "_near_band_below_deg", None),
                 in_near_band=algo.in_near_band,
                 on_percent=algo.on_percent,
                 hvac_mode=t.vtherm_hvac_mode,
@@ -227,8 +227,8 @@ class SmartPIHandler:
                     dt_min = 0.0
                     if timestamp:
                         ts = timestamp.timestamp() if isinstance(timestamp, datetime) else timestamp
-                        if t.prop_algorithm._last_calculate_time:
-                            dt_min = (ts - t.prop_algorithm._last_calculate_time) / 60.0
+                        if getattr(t.prop_algorithm, "_last_calculate_time", None):
+                            dt_min = (ts - getattr(t.prop_algorithm, "_last_calculate_time")) / 60.0
 
                     if hasattr(t.prop_algorithm, "update_realized_power"):
                         t.prop_algorithm.update_realized_power(realized_on_percent, forced_by_timing, dt_min)
@@ -252,8 +252,8 @@ class SmartPIHandler:
         # Stop here if we are off
         if t.vtherm_hvac_mode == VThermHvacMode_OFF:
             _LOGGER.debug("%s - End of cycle (HVAC_MODE_OFF)", t)
-            t._on_time_sec = 0
-            t._off_time_sec = int(t.cycle_min * 60)
+            setattr(t, "_on_time_sec", 0)
+            setattr(t, "_off_time_sec", int(t.cycle_min * 60))
             if t.is_device_active:
                 await t.async_underlying_entity_turn_off()
         else:
@@ -367,11 +367,11 @@ class SmartPIHandler:
             # automatic recalculation is done inside control_heating
             await t.async_control_heating(timestamp=None)
 
-        t._smartpi_recalc_timer_remove = async_track_time_interval(
+        setattr(t, "_smartpi_recalc_timer_remove", async_track_time_interval(
             t.hass,
             _recalc_callback,
             timedelta(seconds=SMARTPI_RECALC_INTERVAL_SEC)
-        )
+        ))
         _LOGGER.debug("%s - SmartPI calc timer started", t)
 
     def _stop_recalc_timer(self):
@@ -380,7 +380,7 @@ class SmartPIHandler:
         remove_callback = getattr(t, "_smartpi_recalc_timer_remove", None)
         if remove_callback:
             remove_callback()
-            t._smartpi_recalc_timer_remove = None
+            setattr(t, "_smartpi_recalc_timer_remove", None)
             _LOGGER.debug("%s - SmartPI calc timer stopped", t)
 
     async def _cancel_calibration_if_active(self):
@@ -432,10 +432,11 @@ class SmartPIHandler:
             # In `diagnostics.py`: "last_calibration_time": ... isoformat() ...
             # So we don't need to re-do it here.
 
-            t._attr_extra_state_attributes["specific_states"]["smart_pi"] = diag_data
+            extra_attrs = getattr(t, "_attr_extra_state_attributes", {})
+            extra_attrs["specific_states"]["smart_pi"] = diag_data
 
             # Add to configuration dict for consistency with TPI
-            t._attr_extra_state_attributes["configuration"].update({
+            extra_attrs["configuration"].update({
                 "minimal_activation_delay_sec": t.minimal_activation_delay,
                 "minimal_deactivation_delay_sec": t.minimal_deactivation_delay,
             })
