@@ -216,43 +216,12 @@ class SmartPIHandler:
             # Trigger learning only on cycle timer (timestamp is not None)
             # And do not learn if we are OFF (window open, etc.)
             if timestamp is not None and current_temp is not None and t.vtherm_hvac_mode != VThermHvacMode_OFF:
+                # Data provider is no longer used for power feedback, which is now provided via e_eff at cycle end.
                 async def _data_provider():
-                    # 1. Get requested percentage from algorithm
-                    requested_on_percent = t.prop_algorithm.on_percent
-
-
-                    # 2. Calculate timing with constraints
-                    on_time_sec, off_time_sec, forced_by_timing = calculate_cycle_times(
-                        requested_on_percent,
-                        t.cycle_min,
-                        t.minimal_activation_delay,
-                        t.minimal_deactivation_delay
-                    )
-
-
-                    # 3. Derive realized percentage
-                    realized_on_percent = on_time_sec / (t.cycle_min * 60)
-
-
-                    # 4. Notify algorithm of realized result for closed-loop anti-windup/tracking
-                    # We calculate dt_min here as it's needed for anti-windup
-                    dt_min = 0.0
-                    if timestamp:
-                        ts = timestamp.timestamp() if isinstance(timestamp, datetime) else timestamp
-                        if getattr(t.prop_algorithm, "_last_calculate_time", None):
-                            dt_min = (ts - getattr(t.prop_algorithm, "_last_calculate_time")) / 60.0
-
-
-                    if hasattr(t.prop_algorithm, "update_realized_power"):
-                        t.prop_algorithm.update_realized_power(realized_on_percent, forced_by_timing, dt_min)
-
                     return {
                         "temp_in": t.current_temperature,
                         "temp_ext": t.current_outdoor_temperature,
                         "timestamp": timestamp,
-                        "on_percent": realized_on_percent, # Use realized percent for learning
-                        "on_time_sec": on_time_sec,
-                        "off_time_sec": off_time_sec,
                         "hvac_mode": t.vtherm_hvac_mode
                     }
 

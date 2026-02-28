@@ -674,15 +674,20 @@ class SmartPI:
         # Reset governance regime tracking for new cycle
         self.gov.on_cycle_start()
 
-        # Notify anti-windup tracker of realized power (migrated from _data_provider)
-        # on_percent here is already the realized (timing-constrained) value from CycleScheduler
-        # _last_calculate_time uses time.monotonic(), so dt_min must use the same clock.
-        now_ts = time.monotonic()
-        dt_min = (now_ts - self._last_calculate_time) / 60.0 if self._last_calculate_time else 0.0
-        self.update_realized_power(u_applied=on_percent, dt_min=dt_min, forced_by_timing=False)
+        # Anti-windup update is now deferred to on_cycle_completed using e_eff
+        pass
 
-    async def on_cycle_completed(self) -> None:
+    async def on_cycle_completed(self, e_eff: float = None) -> None:
         """Handle end of cycle (learning)."""
+        if e_eff is not None:
+            # We receive the effective power (e_eff) from the tick scheduler here at the end of the cycle.
+            # Convert elapsed time since last calculation for beta-scaling.
+            now_ts = time.monotonic()
+            dt_min = (now_ts - getattr(self, "_last_calculate_time", now_ts)) / 60.0
+            
+            # Use update_realized_power to apply anti-windup using the true e_eff
+            self.update_realized_power(u_applied=e_eff, dt_min=dt_min, forced_by_timing=False)
+
         # Cycle accepted -> Count it
         self._cycles_since_reset += 1
 
