@@ -6,8 +6,9 @@ Manages multi-cycle learning window state and accumulation for the a/b estimator
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 from .timestamp_utils import convert_monotonic_to_wall_ts, convert_wall_to_monotonic_ts
 
@@ -27,6 +28,29 @@ if TYPE_CHECKING:
     from .governance import SmartPIGovernance
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class WindowSubmitEvent:
+    """
+    Raw window context emitted by LearningWindowManager just before
+    submitting to ABEstimator.learn().
+
+    Provides the underlying temperature trace and window metadata that
+    are not available inside learn() itself.  Intended for diagnostics
+    and offline analysis only.
+    """
+    param: str                              # "a" or "b"
+    u_eff: float                            # effective duty cycle over window (0–1)
+    window_s: float                         # window duration in seconds
+    t_int_start: float                      # °C — indoor temp at window start
+    t_ext_start: float                      # °C — outdoor temp at window start
+    slope: float                            # °C/min — OLS slope submitted to learn()
+    slope_method: str                       # method used by robust_dTdt_per_min
+    trim_start_frac: float                  # trim fraction applied at start
+    # Raw (monotonic_timestamp, temperature) samples fed to robust_dTdt_per_min.
+    # Subtract samples[0][0] to get elapsed seconds from window start.
+    samples: List[Tuple[float, float]]      # filled in after construction
 
 
 class LearningWindowManager:
@@ -67,6 +91,10 @@ class LearningWindowManager:
 
         # Track last published extending method to suppress duplicate messages
         self._last_extend_method: str = ""
+
+        # Optional diagnostic callback — set externally, never called by control logic.
+        # Signature: (event: WindowSubmitEvent) -> None
+        self.on_window_submit: Optional[Callable[[WindowSubmitEvent], None]] = None
 
     # --------------------------------------------------------------------------
     # Properties for diagnostic access
@@ -213,6 +241,15 @@ class LearningWindowManager:
             ),
             "learning_resume_ts": convert_monotonic_to_wall_ts(self._learning_resume_ts),
         }
+
+    def _emit_window(self, event: WindowSubmitEvent) -> None:
+        """Fire the window diagnostic callback if one is registered. Never raises."""
+        if self.on_window_submit is None:
+            return
+        try:
+            self.on_window_submit(event)
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.debug("LearningWindowManager: on_window_submit callback raised", exc_info=True)
 
     # --------------------------------------------------------------------------
     # Learning window update method
@@ -564,6 +601,17 @@ class LearningWindowManager:
                 self.reset()
                 return deadtime_skip_count_a, deadtime_skip_count_b
 
+            self._emit_window(WindowSubmitEvent(
+                param="b",
+                u_eff=u_eff,
+                window_s=self._t_int_s,
+                t_int_start=self._T_int_start,
+                t_ext_start=self._T_ext_start,
+                slope=final_slope,
+                slope_method=method,
+                trim_start_frac=0.10,
+                samples=list(relevant_samples),
+            ))
             estimator.learn(
                 dT_int_per_min=final_slope,
                 u=0.0,
@@ -585,6 +633,17 @@ class LearningWindowManager:
                 final_slope = dT_dt
                 estimator.diag_dTdt_method = "fallback_simple"
 
+            self._emit_window(WindowSubmitEvent(
+                param="a",
+                u_eff=u_eff,
+                window_s=self._t_int_s,
+                t_int_start=self._T_int_start,
+                t_ext_start=self._T_ext_start,
+                slope=final_slope,
+                slope_method=estimator.diag_dTdt_method,
+                trim_start_frac=0.0,
+                samples=list(relevant_samples),
+            ))
             estimator.learn(
                 dT_int_per_min=final_slope,
                 u=u_eff,

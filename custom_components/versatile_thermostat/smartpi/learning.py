@@ -8,7 +8,7 @@ import logging
 import statistics
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, List, Optional, Tuple
+from typing import Callable, Deque, List, Optional, Tuple
 
 from .timestamp_utils import convert_monotonic_to_wall_ts, convert_wall_to_monotonic_ts
 
@@ -35,6 +35,36 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class LearningEvent:
+    """
+    Context record emitted by ABEstimator for every learn() call,
+    whether the sample is accepted or rejected.
+
+    Intended for diagnostics and offline analysis only — not used by
+    the control algorithm.
+    """
+    param: str          # "a" or "b"
+    accepted: bool      # True if sample passed outlier gate and was stored
+    reject_reason: str  # "" if accepted, otherwise the rejection reason
+
+    # Inputs to learn()
+    dTdt: float         # °C/min — OLS slope passed in
+    u: float            # effective duty cycle (0–1)
+    t_int: float        # °C — indoor temp at window start
+    t_ext: float        # °C — outdoor temp at window start
+    delta: float        # °C — t_int - t_ext
+
+    # Derived measurement
+    meas: float         # a_meas or b_meas before clamping
+
+    # Current estimator state after this call
+    a: float
+    b: float
+    learn_ok_count_a: int
+    learn_ok_count_b: int
 
 
 @dataclass(frozen=True)
@@ -327,6 +357,10 @@ class ABEstimator:
         self.learn_skip_count = 0
         self.learn_last_reason: Optional[str] = "init"
 
+        # Optional diagnostic callback — set externally, never called by control logic.
+        # Signature: (event: LearningEvent) -> None
+        self.on_learning_event: Optional[Callable[[LearningEvent], None]] = None
+
         # Diagnostics
         self.diag_dTdt_method: str = "init"
 
@@ -454,6 +488,39 @@ class ABEstimator:
         # Outlier rejection is handled by learn() via max_abs_dT_per_min
         return slope_min, "ols", len(samples_sorted)
 
+    def _emit(
+        self,
+        param: str,
+        accepted: bool,
+        reject_reason: str,
+        dTdt: float,
+        u: float,
+        t_int: float,
+        t_ext: float,
+        meas: float,
+    ) -> None:
+        """Fire the diagnostic callback if one is registered. Never raises."""
+        if self.on_learning_event is None:
+            return
+        try:
+            self.on_learning_event(LearningEvent(
+                param=param,
+                accepted=accepted,
+                reject_reason=reject_reason,
+                dTdt=dTdt,
+                u=u,
+                t_int=t_int,
+                t_ext=t_ext,
+                delta=t_int - t_ext,
+                meas=meas,
+                a=self.a,
+                b=self.b,
+                learn_ok_count_a=self.learn_ok_count_a,
+                learn_ok_count_b=self.learn_ok_count_b,
+            ))
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.debug("ABEstimator: on_learning_event callback raised", exc_info=True)
+
     # ---------- Main learning ----------
 
     def learn(
@@ -518,6 +585,7 @@ class ABEstimator:
                 if abs(b_meas - med_b) > AB_MAD_SIGMA_MULT * sigma_b:
                     self.learn_skip_count += 1
                     self.learn_last_reason = "skip: b_meas outlier"
+                    self._emit("b", False, "outlier", dTdt, u, t_int, t_ext, b_meas)
                     return
             else:
                 self.diag_b_mad_over_med = 0.0
@@ -533,6 +601,7 @@ class ABEstimator:
             self.learn_ok_count += 1
             self.learn_ok_count_b += 1
             self.learn_last_reason = "learned b (Median)"
+            self._emit("b", True, "", dTdt, u, t_int, t_ext, b_meas)
             return
 
         # ---------- ON phase: learn a ----------
@@ -588,6 +657,7 @@ class ABEstimator:
                 if abs(a_meas - med_a) > AB_MAD_SIGMA_MULT * sigma_a:
                     self.learn_skip_count += 1
                     self.learn_last_reason = "skip: a_meas outlier"
+                    self._emit("a", False, "outlier", dTdt, u, t_int, t_ext, a_meas)
                     return
             else:
                 self.diag_a_mad_over_med = 0.0
@@ -603,6 +673,7 @@ class ABEstimator:
             self.learn_ok_count += 1
             self.learn_ok_count_a += 1
             self.learn_last_reason = "learned a (Median)"
+            self._emit("a", True, "", dTdt, u, t_int, t_ext, a_meas)
             return
 
         self.learn_skip_count += 1
