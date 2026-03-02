@@ -84,7 +84,6 @@ from .smartpi.const import (
 )
 from .smartpi.autocalib import AutoCalibTrigger
 from .smartpi.learning import DeadTimeEstimator, ABEstimator
-from .smartpi.thermal_twin_1r1c import ThermalTwin1R1C, eta_best_case
 from .smartpi.diagnostics import build_diagnostics
 from .smartpi.governance import SmartPIGovernance
 from .smartpi.setpoint import SmartPISetpointManager
@@ -96,6 +95,7 @@ from .smartpi.calibration import CalibrationManager
 from .smartpi.gains import GainScheduler
 from .smartpi.feedforward import apply_ff_gate
 from .smartpi.timestamp_utils import convert_monotonic_to_wall_ts, convert_wall_to_monotonic_ts
+from .smartpi.ab_learning_logger import ABLearningLogger
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -247,11 +247,6 @@ class SmartPI(CycleManager):
 
         # --- Dead Time (L) Support ---
         self.dt_est = DeadTimeEstimator()
-        # --- Thermal Twin 1R1C (diagnostics-only) ---
-        self.twin = ThermalTwin1R1C(
-            dt_s=int(cycle_min * 60), gamma=0.1
-        )
-        self._last_twin_diag: dict = {}
         self._heat_request_prev: bool = False
         self._t_heat_episode_start: float | None = None
         self._t_cool_episode_start: float | None = None
@@ -277,6 +272,20 @@ class SmartPI(CycleManager):
         if saved_state:
             self.load_state(saved_state)
 
+        # --- Diagnostic learning logger (debug_mode only) ---
+        self._ab_logger: Optional[ABLearningLogger] = None
+        if debug_mode:
+            try:
+                self._ab_logger = ABLearningLogger(
+                    name=name,
+                    output_dir="/config/smartpi_logs",
+                )
+                self._ab_logger.attach(self)
+            except OSError as exc:
+                _LOGGER.warning(
+                    "%s - ABLearningLogger could not be created: %s", name, exc
+                )
+
         # Legacy attributes for tests
         self._prev_kp = self.Kp
         self._prev_ki = self.Ki
@@ -292,6 +301,13 @@ class SmartPI(CycleManager):
     #                      PERSISTENCE & STATE                             #
     #                                                                      #
     ########################################################################
+
+    def close(self) -> None:
+        """Release resources held by this instance (e.g. diagnostic log files)."""
+        if self._ab_logger is not None:
+            self._ab_logger.detach(self)
+            self._ab_logger.close()
+            self._ab_logger = None
 
     def reset_learning(self) -> None:
         """Reset all learned parameters to defaults."""
@@ -330,12 +346,6 @@ class SmartPI(CycleManager):
         self._learning_start_date = datetime.now()
 
         # Learning window state is managed by learn_win component
-
-        # Reset Thermal Twin
-        self.twin = ThermalTwin1R1C(
-            dt_s=int(self._cycle_min * 60), gamma=0.1
-        )
-        self._last_twin_diag = {}
 
         # Reset Dead Time Estimator
         self.dt_est.reset()
@@ -1225,8 +1235,8 @@ class SmartPI(CycleManager):
             "db_state": self.deadband_mgr.save_state() if hasattr(self.deadband_mgr, "save_state") else {},
             "cal_state": self.calibration_mgr.save_state() if hasattr(self.calibration_mgr, "save_state") else {},
             "gs_state": self.gain_scheduler.save_state() if hasattr(self.gain_scheduler, "save_state") else {},
-            "twin_state": self.twin.save_state(),
             "guards_state": self.guards.save_state(),
+            "ac_state": self.autocalib.save_state(),
         }
         return state
 
@@ -1379,7 +1389,6 @@ class SmartPI(CycleManager):
         # thermal reality; starting from 0 is safer.
         self.ctl.integral = 0.0
         self.ctl.u_prev = 0.0
-        self.twin.load_state(migrated.get("twin_state", {}))
 
         # Load main algorithm scalars
         self._deadtime_skip_count_a = int(migrated.get("deadtime_skip_count_a", 0))
@@ -1798,10 +1807,6 @@ class SmartPI(CycleManager):
             self._output_initialized = True
             self._last_i_mode = "calibration"
             self._last_target_temp = target_temp
-            # Refresh tau_reliable for twin diagnostics
-            self._tau_reliable = self.est.tau_reliability().reliable
-            # Update Twin Diagnostics even in calibration
-            self._update_twin_diagnostics(current_temp, ext_current_temp, target_temp, hvac_mode)
             return
 
         # --- 5. Hysteresis Phase ---
@@ -1819,8 +1824,6 @@ class SmartPI(CycleManager):
                 max_on_percent=self._max_on_percent if self._max_on_percent is not None else 1.0,
                 is_hysteresis=True,
             )
-            # Update Twin Diagnostics even in hysteresis
-            self._update_twin_diagnostics(current_temp, ext_current_temp, target_temp, hvac_mode)
             return
 
         # --- 6. Control Context & Deadband ---
@@ -1945,34 +1948,6 @@ class SmartPI(CycleManager):
         )
         self.u_prev = self._on_percent
         self._cycles_since_reset += 1
-
-        # --- 15. Thermal Twin & ETA (diagnostics-only) ---
-        self._update_twin_diagnostics(current_temp, ext_current_temp, target_temp, hvac_mode)
-
-
-    def _update_twin_diagnostics(
-        self,
-        current_temp: float,
-        ext_current_temp: float | None,
-        target_temp: float,
-        hvac_mode: VThermHvacMode,
-    ) -> None:
-        """Update thermal twin and compute ETA best-case (diagnostics-only)."""
-        mode = "heat" if hvac_mode == VThermHvacMode_HEAT else "cool"
-        self._last_twin_diag = self.twin.update_with_eta(
-            tin=current_temp,
-            text=ext_current_temp,
-            target=target_temp,
-            on_percent=self._on_percent,
-            tau_reliable=self._tau_reliable,
-            a=self.est.a,
-            b=self.est.b,
-            mode=mode,
-            deadtime_heat_s=self.dt_est.deadtime_heat_s,
-            deadtime_cool_s=self.dt_est.deadtime_cool_s,
-            deadtime_heat_reliable=self.dt_est.deadtime_heat_reliable,
-            deadtime_cool_reliable=self.dt_est.deadtime_cool_reliable,
-        )
 
     def _update_deadtime_episode_status(self, u_applied: float, hvac_mode: VThermHvacMode, now: float) -> None:
         """
