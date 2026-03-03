@@ -236,6 +236,10 @@ class BaseThermostat(ClimateEntity, RestoreEntity, Generic[T]):
     ) -> dict[str, Any]:
         """Removes all values from config with are concerned by central_config"""
 
+        # Keys shared between TPI and SmartPI schemas that must only be removed
+        # when the schema's algorithm is the one actually active on this VTherm.
+        _SHARED_DELAY_KEYS = {CONF_MINIMAL_ACTIVATION_DELAY, CONF_MINIMAL_DEACTIVATION_DELAY}
+
         def clean_one(cfg, schema: vol.Schema):
             """Clean one schema"""
             for marker in schema.schema:
@@ -244,14 +248,29 @@ class BaseThermostat(ClimateEntity, RestoreEntity, Generic[T]):
                 if key in cfg:
                     del cfg[key]
 
+        def clean_one_excluding(cfg, schema: vol.Schema, excluded_keys: set):
+            """Clean one schema, leaving the excluded_keys untouched."""
+            for marker in schema.schema:
+                key = marker.schema if hasattr(marker, 'schema') else marker
+                if key in cfg and key not in excluded_keys:
+                    del cfg[key]
+
         cfg = config_entry.copy()
+        prop_function = cfg.get(CONF_PROP_FUNCTION)
+
         if central_config and central_config.data:
             # Removes config if central is used
             if cfg.get(CONF_USE_MAIN_CENTRAL_CONFIG) is True:
                 clean_one(cfg, STEP_CENTRAL_MAIN_DATA_SCHEMA)
 
             if cfg.get(CONF_USE_TPI_CENTRAL_CONFIG) is True:
-                clean_one(cfg, STEP_CENTRAL_TPI_DATA_SCHEMA)
+                # Delay keys are shared with SmartPI schema.
+                # Only remove them when TPI is the active algorithm so that
+                # a SmartPI VTherm does not lose its own specific delay values.
+                if prop_function in (PROPORTIONAL_FUNCTION_TPI, None):
+                    clean_one(cfg, STEP_CENTRAL_TPI_DATA_SCHEMA)
+                else:
+                    clean_one_excluding(cfg, STEP_CENTRAL_TPI_DATA_SCHEMA, _SHARED_DELAY_KEYS)
 
             if cfg.get(CONF_USE_WINDOW_CENTRAL_CONFIG) is True:
                 clean_one(cfg, STEP_CENTRAL_WINDOW_DATA_SCHEMA)
@@ -272,7 +291,11 @@ class BaseThermostat(ClimateEntity, RestoreEntity, Generic[T]):
                 clean_one(cfg, STEP_CENTRAL_LOCK_DATA_SCHEMA)
 
             if cfg.get(CONF_USE_SMART_PI_CENTRAL_CONFIG) is True:
-                clean_one(cfg, STEP_SMART_PI_CENTRAL_SCHEMA)
+                # Same guard: only remove delay keys when SmartPI is the active algorithm.
+                if prop_function in (PROPORTIONAL_FUNCTION_SMART_PI, None):
+                    clean_one(cfg, STEP_SMART_PI_CENTRAL_SCHEMA)
+                else:
+                    clean_one_excluding(cfg, STEP_SMART_PI_CENTRAL_SCHEMA, _SHARED_DELAY_KEYS)
 
             if cfg.get(CONF_USE_HEATING_FAILURE_DETECTION_CENTRAL_CONFIG) is True:
                 clean_one(cfg, STEP_CENTRAL_HEATING_FAILURE_DETECTION_SCHEMA)
