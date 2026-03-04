@@ -19,6 +19,7 @@ from .const import (
     U_CV_MIN_MEAN,
     U_OFF_MAX,
     U_ON_MIN,
+    WINDOW_MIN_MINUTES,
     clamp,
 )
 
@@ -505,8 +506,12 @@ class LearningWindowManager:
                         "skip: B flywheel timeout" if b_wrong_dir else "skip: A deadtime timeout"
                     )
                     return deadtime_skip_count_a, deadtime_skip_count_b
+            # Minimum window duration before attempting slope calculation
+            if window_dt_min < WINDOW_MIN_MINUTES:
+                return deadtime_skip_count_a, deadtime_skip_count_b
+
             # Try slope quality: submit if robust, extend if not, timeout if limit reached.
-            # robust_dTdt_per_min enforces its own internal guards (>=6 samples, amplitude).
+            # robust_dTdt_per_min enforces its own internal guards (jumps, amplitude, t-test).
             trim_frac = 0.10 if u_eff_pre < U_OFF_MAX else 0.0
             relevant_samples = [p for p in dt_est.tin_history if p[0] >= self._start_ts]
             slope_val, method, n_samples = ABEstimator.robust_dTdt_per_min(

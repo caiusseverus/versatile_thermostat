@@ -95,15 +95,18 @@ Smart-PI utilise un apprentissage **continu et asynchrone**.
 
 #### Fenêtre Glissante (Sliding Window)
 L'algorithme accumule les données (T_int, T_ext, Puissance) au fil de l'eau. Une tentative d'apprentissage est déclenchée dès qu'une "fenêtre" valide est détectée :
-1.  **Durée minimale** : L'épisode doit durer suffisamment longtemps (ex: > 10 min en chauffe, > 15 min en refroidissement).
-2.  **Amplitude** : La variation de température doit être significative (ex: > 0.2°C).
-3.  **Cohérence de la puissance** : La puissance doit être restée stable (soit > 20% pour apprendre `a`, soit < 5% pour apprendre `b`).
+1.  **Durée minimale** : La fenêtre doit durer au moins `WINDOW_MIN_MINUTES` (10 min) avant toute tentative de calcul de pente.
+2.  **Comptage de sauts (Jump Guardrail)** : Le signal de température doit contenir au moins `OLS_MIN_JUMPS` (3) changements de niveau distincts. Ce verrou empêche les capteurs à faible résolution (ex: 0.1°C) de produire des pentes sur un seul saut de quantification.
+3.  **Amplitude** : La variation de température doit être significative (> `DT_DERIVATIVE_MIN_ABS` = 0.05°C).
+4.  **Cohérence de la puissance** : La puissance doit être restée stable (soit > 20% pour apprendre `a`, soit < 5% pour apprendre `b`).
 
 Une fois ces conditions réunies, l'algorithme "ferme" la fenêtre et lance l'identification.
 
-#### Robustesse (OLS & Median+MAD)
+#### Robustesse (OLS + t-test & Median+MAD)
 Sur la fenêtre identifiée :
-1.  **Calcul de la Pente** : Utilisation de la régression **OLS** (Ordinary Least Squares) sur les données brutes pour extraire la dérivée $\frac{dT_{int}}{dt}$. Le rejet des pentes physiquement aberrantes est assuré par `learn()` via le seuil `max_abs_dT_per_min`.
+1.  **Calcul de la Pente** : Utilisation de la régression **OLS** (Ordinary Least Squares) sur **tous les points originaux** pour extraire la dérivée $\frac{dT_{int}}{dt}$.
+2.  **Test de significativité (Student t-test)** : La pente OLS doit être statistiquement distinguable de zéro ($t = |\hat{b}_1| / SE(\hat{b}_1) \geq$ `OLS_T_MIN`). Ce test s'adapte automatiquement à la résolution du capteur : un capteur 0.01°C converge rapidement, un capteur 0.1°C nécessite plus de données.
+3.  **Rejet physique** : Les pentes physiquement aberrantes sont rejetées par `learn()` via le seuil `max_abs_dT_per_min`.
 2.  **Estimation $a$ et $b$** :
     - Si $u \approx 0$ (Refroidissement) : On estime $b$.
     - Si $u > 0$ (Chauffe) : On estime $a$ (en utilisant le $b$ courant).
@@ -372,7 +375,7 @@ graph TD
 
 1. **Sundaresan k.R. and Krishnaswamy P.R.**, "Estimation of Time Delay Time Constant Parameters in Time, Frequency, and Laplace Domains", *Canadian Journal of Chemical Engineering*, 1978. (Méthode utilisée pour l'estimateur de temps mort)
 2. **Astrom K.J. and Hagglund T.**, "Advanced PID Control", ISA, 2006. (Concepts d'anti-windup, setpoint weighting et méthodes de réglage).
-3. **OLS (Ordinary Least Squares)**: Estimateur de pente non biaisé utilisé pour le calcul de $\frac{dT_{int}}{dt}$ sur la fenêtre glissante. Complexité O(N), sans biais de phase. Le rejet des outliers physiques est délégué à `learn()` (seuil `max_abs_dT_per_min`).
+3. **OLS (Ordinary Least Squares)**: Estimateur de pente non biaisé utilisé pour le calcul de $\frac{dT_{int}}{dt}$ sur la fenêtre glissante. Complexité O(N), sans biais de phase. Validé par un test t de Student pour la significativité de la pente. Le rejet des outliers physiques est délégué à `learn()` (seuil `max_abs_dT_per_min`).
 
 ## 7. Paramètres et Configuration Avancée
 
@@ -412,6 +415,10 @@ Les paramètres clés sont définis dans `smartpi/const.py` :
 | `AB_B_CONVERGENCE_RANGE_RATIO` | 0.10 | Seuil max de `range(last_5)/Med` pour `b` |
 | `AB_MAD_SIGMA_MULT` | 3.0 | Seuil de rejet des outliers (nombre de sigma) |
 | `LEARN_QUALITY_THRESHOLD` | 0.25 | Qualité minimale (QI) pour accepter un apprentissage |
+| `WINDOW_MIN_MINUTES` | 10.0 | Durée minimum de la fenêtre d'apprentissage (minutes) |
+| `DT_DERIVATIVE_MIN_ABS` | 0.05 | Amplitude minimum de température pour valider une pente (°C) |
+| `OLS_MIN_JUMPS` | 3 | Nombre minimum de changements de niveau de température requis |
+| `OLS_T_MIN` | 2.5 | Seuil minimum du t-test de Student pour la significativité de la pente |
 | `EPISODE_MIN_DURATION_ON_S` | 600 | Durée min d'un épisode ON (10 min) |
 | `EPISODE_MIN_DURATION_OFF_S` | 900 | Durée min d'un épisode OFF (15 min) |
 | `LEARNING_PAUSE_RESUME_MIN` | 20 | Pause d'apprentissage après reprise (minutes) |

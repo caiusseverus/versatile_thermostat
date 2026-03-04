@@ -5,6 +5,7 @@ Contains DeadTimeEstimator and ABEstimator.
 from __future__ import annotations
 
 import logging
+import math
 import statistics
 from collections import deque
 from dataclasses import dataclass
@@ -34,6 +35,8 @@ from .const import (
     DELTA_MIN_OFF,
     DELTA_MIN_ON,
     DT_DERIVATIVE_MIN_ABS,
+    OLS_MIN_JUMPS,
+    OLS_T_MIN,
     U_OFF_MAX,
     U_ON_MIN,
     clamp,
@@ -402,17 +405,19 @@ class ABEstimator:
     @staticmethod
     def robust_dTdt_per_min(
         samples: list[Tuple[float, float]],
-        _window_min: float = 8.0,
         *,
         trim_start_frac: float = 0.0,
         trim_end_frac: float = 0.0,
     ) -> Tuple[float | None, str, int]:
         """
         Calculate robust dT/dt (°C/min) given a list of (t_sec, T_int).
-        
+
+        Uses a 2-layer validation:
+        1. Jump count guardrail: reject if too few temperature level changes
+        2. OLS on all points + Student t-test for slope significance
+
         Args:
             samples: list of (timestamp, value)
-            window_min: desired window size in minutes (check consistence)
             trim_start_frac: fraction of time window to ignore at start (0.0-0.5)
             trim_end_frac: fraction of time window to ignore at end (0.0-0.5)
 
@@ -422,52 +427,82 @@ class ABEstimator:
         """
         if not samples or len(samples) < 6:
             return None, "insufficient_samples", len(samples)
-            
-        # Unzip
-        # Sort by time just in case
+
         samples_sorted = sorted(samples, key=lambda p: p[0])
-        
+
         # Optional trimming by time span (safety-clamped)
         if trim_start_frac > 0.0 or trim_end_frac > 0.0:
             t_start = samples_sorted[0][0]
             t_end = samples_sorted[-1][0]
             span = t_end - t_start
-            
-            # Clamp fractions
+
             tf_start = clamp(trim_start_frac, 0.0, 0.45)
             tf_end = clamp(trim_end_frac, 0.0, 0.45)
-            
+
             t_valid_start = t_start + span * tf_start
             t_valid_end = t_end - span * tf_end
-            
-            # Filter samples
+
             samples_trimmed = [p for p in samples_sorted if t_valid_start <= p[0] <= t_valid_end]
-            
-            # Check if we still have enough points
+
             if len(samples_trimmed) < 4:
-                # Trimming left too few points -> abort robust calc
-                # (Caller might fallback, or getting None is the intended "skip")
                 return None, "insufficient_samples_trimmed", len(samples_trimmed)
-                
+
             samples_sorted = samples_trimmed
 
         x = [p[0] for p in samples_sorted]
         y = [p[1] for p in samples_sorted]
+        n = len(x)
 
-        # Amplitude check
+        # Layer 1: Jump count guardrail
+        jumps = 0
+        last_v = y[0]
+        for v in y[1:]:
+            if v != last_v:
+                jumps += 1
+                last_v = v
+        if jumps < OLS_MIN_JUMPS:
+            return None, "too_few_jumps", jumps
+
+        # Amplitude guard (secondary)
         amp = max(y) - min(y)
         if amp < DT_DERIVATIVE_MIN_ABS:
-            return None, "low_amplitude", len(samples_sorted)
+            return None, "low_amplitude", n
 
-        # OLS slope estimation
-        slope_sec = ABEstimator._ols_slope(x, y)
-        if slope_sec is None:
-            return None, "ols_fail", len(samples_sorted)
+        # Layer 2: OLS on all original points + t-test
+        sx = sum(x)
+        sy = sum(y)
+        sxx = sum(xi * xi for xi in x)
+        sxy = sum(xi * yi for xi, yi in zip(x, y))
 
-        slope_min = slope_sec * 60.0
+        ss_xx = sxx - (sx * sx) / n
+        if ss_xx < 1e-15:
+            return None, "ols_fail", n
 
-        # Outlier rejection is handled by learn() via max_abs_dT_per_min
-        return slope_min, "ols", len(samples_sorted)
+        ss_xy = sxy - (sx * sy) / n
+        b1 = ss_xy / ss_xx
+        b0 = (sy - b1 * sx) / n
+
+        # SSE = sum of squared residuals
+        sse = sum((yi - (b0 + b1 * xi)) ** 2 for xi, yi in zip(x, y))
+
+        if n <= 2:
+            return None, "ols_fail", n
+
+        mse = sse / (n - 2)
+        se_b1_sq = mse / ss_xx
+        if se_b1_sq <= 0:
+            # Perfect fit (no residual variance)
+            return b1 * 60.0, "ols_ttest", n
+
+        se_b1 = math.sqrt(se_b1_sq)
+        if se_b1 < 1e-15:
+            return b1 * 60.0, "ols_ttest", n
+
+        t_stat = abs(b1) / se_b1
+        if t_stat < OLS_T_MIN:
+            return None, "slope_not_significant", n
+
+        return b1 * 60.0, "ols_ttest", n
 
     # ---------- Main learning ----------
 

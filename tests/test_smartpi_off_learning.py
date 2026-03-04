@@ -13,7 +13,7 @@ from custom_components.versatile_thermostat.prop_algo_smartpi import SmartPI
 from custom_components.versatile_thermostat.smartpi.learning import ABEstimator
 
 # Constants from the module (replicated here for test setup)
-DT_DERIVATIVE_MIN_ABS = 0.03
+DT_DERIVATIVE_MIN_ABS = 0.05
 
 
 

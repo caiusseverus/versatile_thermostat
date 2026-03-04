@@ -95,15 +95,18 @@ Smart-PI uses **continuous and asynchronous** learning.
 
 #### Sliding Window
 The algorithm accumulates data (T_int, T_ext, Power) continuously. A learning attempt is triggered as soon as a valid "window" is detected:
-1.  **Minimum duration**: The episode must last long enough (e.g., > 10 min heating, > 15 min cooling).
-2.  **Amplitude**: The temperature variation must be significant (e.g., > 0.2°C).
-3.  **Power consistency**: Power must have remained stable (either > 20% to learn `a`, or < 5% to learn `b`).
+1.  **Minimum duration**: The window must last at least `WINDOW_MIN_MINUTES` (10 min) before any slope calculation is attempted.
+2.  **Jump count guardrail**: The temperature signal must contain at least `OLS_MIN_JUMPS` (3) distinct level changes. This prevents low-resolution sensors (e.g., 0.1°C) from producing slopes based on a single quantization step.
+3.  **Amplitude**: The temperature variation must be significant (> `DT_DERIVATIVE_MIN_ABS` = 0.05°C).
+4.  **Power consistency**: Power must have remained stable (either > 20% to learn `a`, or < 5% to learn `b`).
 
 Once these conditions are met, the algorithm "closes" the window and launches identification.
 
-#### Robustness (OLS & Median+MAD)
+#### Robustness (OLS + t-test & Median+MAD)
 On the identified window:
-1.  **Slope calculation**: Using **OLS** (Ordinary Least Squares) regression on raw data to extract the derivative $\frac{dT_{int}}{dt}$. Rejection of physically unreasonable slopes is handled by `learn()` via the `max_abs_dT_per_min` threshold.
+1.  **Slope calculation**: Using **OLS** (Ordinary Least Squares) regression on **all original data points** to extract the derivative $\frac{dT_{int}}{dt}$.
+2.  **Significance test (Student t-test)**: The OLS slope must be statistically distinguishable from zero ($t = |\hat{b}_1| / SE(\hat{b}_1) \geq$ `OLS_T_MIN`). This test adapts automatically to sensor resolution: a 0.01°C sensor converges quickly, a 0.1°C sensor requires more data.
+3.  **Physical rejection**: Physically unreasonable slopes are rejected by `learn()` via the `max_abs_dT_per_min` threshold.
 2.  **Estimation of $a$ and $b$**:
     - If $u \approx 0$ (Cooling): $b$ is estimated.
     - If $u > 0$ (Heating): $a$ is estimated (using the current $b$).
@@ -375,7 +378,7 @@ graph TD
 
 1. **Sundaresan K.R. and Krishnaswamy P.R.**, "Estimation of Time Delay Time Constant Parameters in Time, Frequency, and Laplace Domains", *Canadian Journal of Chemical Engineering*, 1978. (Method used for the dead time estimator)
 2. **Astrom K.J. and Hagglund T.**, "Advanced PID Control", ISA, 2006. (Anti-windup concepts, setpoint weighting, and tuning methods).
-3. **OLS (Ordinary Least Squares)**: Unbiased slope estimator used to compute $\frac{dT_{int}}{dt}$ over the sliding window. O(N) complexity, no phase bias. Physical outlier rejection is delegated to `learn()` via the `max_abs_dT_per_min` threshold.
+3. **OLS (Ordinary Least Squares)**: Unbiased slope estimator used to compute $\frac{dT_{int}}{dt}$ over the sliding window. O(N) complexity, no phase bias. Validated by a Student t-test for slope significance. Physical outlier rejection is delegated to `learn()` via the `max_abs_dT_per_min` threshold.
 
 ## 7. Parameters and Advanced Configuration
 
@@ -415,6 +418,10 @@ Key parameters are defined in `smartpi/const.py`:
 | `AB_B_CONVERGENCE_RANGE_RATIO` | 0.10 | Max `range(last_5)/Med` threshold for `b` |
 | `AB_MAD_SIGMA_MULT` | 3.0 | Outlier rejection threshold (sigma count) |
 | `LEARN_QUALITY_THRESHOLD` | 0.25 | Minimum quality (QI) to accept a learning episode |
+| `WINDOW_MIN_MINUTES` | 10.0 | Minimum learning window duration (minutes) |
+| `DT_DERIVATIVE_MIN_ABS` | 0.05 | Minimum temperature amplitude to validate a slope (°C) |
+| `OLS_MIN_JUMPS` | 3 | Minimum number of temperature level changes required |
+| `OLS_T_MIN` | 2.5 | Minimum Student t-test threshold for slope significance |
 | `EPISODE_MIN_DURATION_ON_S` | 600 | Minimum ON episode duration (10 min) |
 | `EPISODE_MIN_DURATION_OFF_S` | 900 | Minimum OFF episode duration (15 min) |
 | `LEARNING_PAUSE_RESUME_MIN` | 20 | Learning pause after resume (minutes) |
