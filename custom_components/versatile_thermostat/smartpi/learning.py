@@ -12,6 +12,7 @@ from typing import Deque, List, Optional, Tuple
 
 from .timestamp_utils import convert_monotonic_to_wall_ts, convert_wall_to_monotonic_ts
 
+from .ab_aggregator import ab_publish
 from .const import (
     AB_A_SOFT_GATE_MIN_B,
     AB_B_CONVERGENCE_MAD_RATIO,
@@ -21,10 +22,14 @@ from .const import (
     AB_HISTORY_SIZE,
     AB_MAD_K,
     AB_MAD_SIGMA_MULT,
+    AB_MIN_POINTS_FOR_PUBLISH,
     AB_MIN_SAMPLES_A,
     AB_MIN_SAMPLES_A_CONVERGED,
     AB_MIN_SAMPLES_B,
     AB_VAL_TOLERANCE,
+    AB_WMED_ALPHA,
+    AB_WMED_PLATEAU_N,
+    AB_WMED_R,
     B_STABILITY_MAD_RATIO_MAX,
     DELTA_MIN_OFF,
     DELTA_MIN_ON,
@@ -298,10 +303,12 @@ class ABEstimator:
     2. Median + MAD is used for robust a and b parameter estimation from history.
     """
 
-    def __init__(self, a_init: float = 0.0005, b_init: float = 0.0010):
+    def __init__(self, a_init: float = 0.0005, b_init: float = 0.0010, mode: str = "median"):
         self.A_INIT = a_init
         self.B_INIT = b_init
-        
+
+        self._aggregation_mode: str = mode
+
         self.a = a_init
         self.b = b_init
 
@@ -333,6 +340,11 @@ class ABEstimator:
         self.diag_b_mad_over_med: Optional[float] = None
         self.diag_a_mad_over_med: Optional[float] = None
 
+        # Aggregation diagnostics
+        self.diag_ab_bootstrap: bool = False
+        self.diag_ab_points: int = 0
+        self.diag_ab_mode_effective: str = "init"
+
     def reset(self) -> None:
         """Reset learned parameters and history to initial values."""
         self.a = self.A_INIT
@@ -349,6 +361,9 @@ class ABEstimator:
 
         self.diag_b_mad_over_med = None
         self.diag_a_mad_over_med = None
+        self.diag_ab_bootstrap = False
+        self.diag_ab_points = 0
+        self.diag_ab_mode_effective = "init"
 
     # ---------- Robust helpers (Static) ----------
 
@@ -525,14 +540,25 @@ class ABEstimator:
             # It's an acceptable value, add it permanently
             self.b_meas_hist.append(b_meas)
 
-            new_b = med_b  # Use median directly
+            new_b, ab_diag = ab_publish(
+                self.b_meas_hist,
+                mode=self._aggregation_mode,
+                plateau_n=AB_WMED_PLATEAU_N,
+                alpha=AB_WMED_ALPHA,
+                r=AB_WMED_R,
+                min_points_for_publish=AB_MIN_POINTS_FOR_PUBLISH,
+                default_value=self.B_INIT,
+            )
+            self.diag_ab_bootstrap = ab_diag.get("ab_bootstrap", False)
+            self.diag_ab_points = ab_diag.get("ab_points", len(self.b_meas_hist))
+            self.diag_ab_mode_effective = ab_diag.get("ab_mode_effective", "median")
             new_b = clamp(new_b, self.B_MIN, self.B_MAX)
 
             self.b = new_b
             self._b_hat_hist.append(new_b)
             self.learn_ok_count += 1
             self.learn_ok_count_b += 1
-            self.learn_last_reason = "learned b (Median)"
+            self.learn_last_reason = f"learned b ({self.diag_ab_mode_effective})"
             return
 
         # ---------- ON phase: learn a ----------
@@ -595,14 +621,25 @@ class ABEstimator:
             # It's an acceptable value, add it permanently
             self.a_meas_hist.append(a_meas)
 
-            new_a = med_a  # Use median directly
+            new_a, ab_diag = ab_publish(
+                self.a_meas_hist,
+                mode=self._aggregation_mode,
+                plateau_n=AB_WMED_PLATEAU_N,
+                alpha=AB_WMED_ALPHA,
+                r=AB_WMED_R,
+                min_points_for_publish=AB_MIN_POINTS_FOR_PUBLISH,
+                default_value=self.A_INIT,
+            )
+            self.diag_ab_bootstrap = ab_diag.get("ab_bootstrap", False)
+            self.diag_ab_points = ab_diag.get("ab_points", len(self.a_meas_hist))
+            self.diag_ab_mode_effective = ab_diag.get("ab_mode_effective", "median")
             new_a = clamp(new_a, self.A_MIN, self.A_MAX)
 
             self.a = new_a
             self._a_hat_hist.append(new_a)
             self.learn_ok_count += 1
             self.learn_ok_count_a += 1
-            self.learn_last_reason = "learned a (Median)"
+            self.learn_last_reason = f"learned a ({self.diag_ab_mode_effective})"
             return
 
         self.learn_skip_count += 1

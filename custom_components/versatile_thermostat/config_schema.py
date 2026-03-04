@@ -586,6 +586,13 @@ STEP_SMART_PI_PARAMS_SCHEMA = vol.Schema(
         ),
         vol.Optional(CONF_SMART_PI_USE_SETPOINT_FILTER, default=False): cv.boolean,
         vol.Optional(CONF_SMART_PI_DEBUG, default=False): cv.boolean,
+        vol.Optional(CONF_SMART_PI_AGGREGATION_MODE, default="median"): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=["median", "weighted_median"],
+                translation_key="smart_pi_aggregation_mode",
+                mode=selector.SelectSelectorMode.LIST,
+            )
+        ),
         vol.Optional(CONF_MINIMAL_ACTIVATION_DELAY, default=0): cv.positive_int,
         vol.Optional(CONF_MINIMAL_DEACTIVATION_DELAY, default=0): cv.positive_int,
     }
@@ -611,6 +618,13 @@ STEP_SMART_PI_CENTRAL_SCHEMA = vol.Schema(
         ),
         vol.Optional(CONF_SMART_PI_USE_SETPOINT_FILTER, default=False): cv.boolean,
         vol.Optional(CONF_SMART_PI_DEBUG, default=False): cv.boolean,
+        vol.Optional(CONF_SMART_PI_AGGREGATION_MODE, default="median"): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=["median", "weighted_median"],
+                translation_key="smart_pi_aggregation_mode",
+                mode=selector.SelectSelectorMode.LIST,
+            )
+        ),
         vol.Optional(CONF_MINIMAL_ACTIVATION_DELAY, default=0): cv.positive_int,
         vol.Optional(CONF_MINIMAL_DEACTIVATION_DELAY, default=0): cv.positive_int,
     }

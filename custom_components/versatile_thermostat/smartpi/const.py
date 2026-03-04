@@ -252,6 +252,12 @@ AB_B_CONVERGENCE_RANGE_RATIO: float = 0.10
 AB_B_CONVERGENCE_MIN_BHIST: int = 5
 AB_A_SOFT_GATE_MIN_B: int = 5
 
+# --- ABEstimator weighted-median aggregation parameters ---
+AB_WMED_PLATEAU_N: int = 11          # Most-recent N points assigned weight 1.0 (plateau)
+AB_WMED_ALPHA: float = 1.0           # Weight factor at the start of the tail
+AB_WMED_R: float = 0.85              # Geometric decay factor for tail weights
+AB_MIN_POINTS_FOR_PUBLISH: int = 11  # Below this count: freeze to default value
+
 # --- SmartPI Learning Window Constants ---
 # Absolute timeout for a learning window (both A and B).
 # The window extends as long as the OLS slope is not yet robust, up to this limit.

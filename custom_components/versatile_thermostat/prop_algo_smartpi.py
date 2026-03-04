@@ -144,6 +144,7 @@ class SmartPI(CycleManager):
         use_setpoint_filter: bool = True,
         hysteresis_on: float = HYST_LOWER_C,
         hysteresis_off: float = HYST_UPPER_C,
+        aggregation_mode: str = "median",
         debug_mode: bool = False,
     ) -> None:
         super().__init__(hass, name, cycle_min, minimal_deactivation_delay)
@@ -181,7 +182,7 @@ class SmartPI(CycleManager):
         self.ctl = SmartPIController(name)
 
         # Model estimator
-        self.est = ABEstimator()
+        self.est = ABEstimator(mode=aggregation_mode)
 
         # --- New Component Managers (Phase 2.5 refactoring) ---
         self.learn_win = LearningWindowManager(name)

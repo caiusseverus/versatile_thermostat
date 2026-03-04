@@ -76,6 +76,9 @@ def build_diagnostics(algo: SmartPI, debug_mode: bool = False) -> Dict[str, Any]
         "diag_dTdt_method": algo.est.diag_dTdt_method,
         "diag_b_mad_over_med": round(algo.est.diag_b_mad_over_med, 3) if algo.est.diag_b_mad_over_med is not None else None,
         "diag_a_mad_over_med": round(algo.est.diag_a_mad_over_med, 3) if algo.est.diag_a_mad_over_med is not None else None,
+        "diag_ab_bootstrap": algo.est.diag_ab_bootstrap,
+        "diag_ab_points": algo.est.diag_ab_points,
+        "diag_ab_mode_effective": algo.est.diag_ab_mode_effective,
         # Learning metadata
         "learning_start_dt": algo._learning_start_date,
         "learn_progress_percent": (

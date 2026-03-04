@@ -23,6 +23,7 @@ from .const import (
     CONF_MINIMAL_ACTIVATION_DELAY,
     CONF_MINIMAL_DEACTIVATION_DELAY,
     CONF_MAX_ON_PERCENT,
+    CONF_SMART_PI_AGGREGATION_MODE,
     CONF_SMART_PI_DEADBAND,
     CONF_SMART_PI_USE_SETPOINT_FILTER,
     CONF_SMART_PI_HYSTERESIS_ON,
@@ -83,6 +84,7 @@ class SmartPIHandler:
         hyst_on = entry.get(CONF_SMART_PI_HYSTERESIS_ON, 0.3)
         hyst_off = entry.get(CONF_SMART_PI_HYSTERESIS_OFF, 0.5)
         debug_mode = entry.get(CONF_SMART_PI_DEBUG, False)
+        aggregation_mode = entry.get(CONF_SMART_PI_AGGREGATION_MODE, "median")
 
         # Create SmartPI instance
         # Note: saved_state is loaded asynchronously later
@@ -97,6 +99,7 @@ class SmartPIHandler:
             use_setpoint_filter=use_setpoint_filter,
             hysteresis_on=hyst_on,
             hysteresis_off=hyst_off,
+            aggregation_mode=aggregation_mode,
             debug_mode=debug_mode,
         )
 
