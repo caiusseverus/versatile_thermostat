@@ -1386,7 +1386,12 @@ class SmartPI(CycleManager):
         self._deadtime_skip_count_a = int(migrated.get("deadtime_skip_count_a", 0))
         self._deadtime_skip_count_b = int(migrated.get("deadtime_skip_count_b", 0))
         self._accumulated_dt = float(migrated.get("accumulated_dt", 0.0))
-        self._learning_resume_ts = convert_wall_to_monotonic_ts(migrated.get("learning_resume_ts"))
+        # The learning_resume_ts from the previous session must NOT be carried over:
+        # _startup_grace_period handles the post-restart freeze for exactly one cycle.
+        # Keeping a stale resume-ts (e.g., the 20-min OFF-resume value) would overwrite
+        # the learn_win ts on the second tick via update_learning() and block learning
+        # for the full 20 minutes after every restart.
+        self._learning_resume_ts = None
 
         # Load Guard State
         self.guards.load_state(migrated.get("guards_state", {}))

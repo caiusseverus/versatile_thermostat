@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from .timestamp_utils import convert_monotonic_to_wall_ts, convert_wall_to_monotonic_ts
+from .timestamp_utils import convert_monotonic_to_wall_ts
 
 from .const import (
     AB_A_SOFT_GATE_MIN_B,
@@ -54,6 +54,9 @@ class LearningWindowManager:
         self._u_int: float = 0.0
         self._t_int_s: float = 0.0
         self._u_first: float | None = None
+
+        # Cumulative time spent in sliding-start state (across consecutive ticks)
+        self._sliding_elapsed_s: float = 0.0
 
         # Power variance tracking (Welford online algorithm)
         self._u_count: int = 0
@@ -133,6 +136,7 @@ class LearningWindowManager:
         self._u_mean = 0.0
         self._u_m2 = 0.0
         self._last_extend_method = ""
+        self._sliding_elapsed_s = 0.0
 
     def reset_all(self) -> None:
         """Reset all learning window state including timestamps."""
@@ -199,7 +203,10 @@ class LearningWindowManager:
         else:
             self._learning_start_date = datetime.now()
             
-        self._learning_resume_ts = convert_wall_to_monotonic_ts(state.get("learning_resume_ts"))
+        # The learning_resume_ts must NOT survive a restart: _startup_grace_period in
+        # prop_algo_smartpi handles the post-boot freeze for one cycle. Restoring a stale
+        # value (e.g., 20-min OFF-resume) would block learning for the full duration.
+        self._learning_resume_ts = None
 
     def save_state(self) -> dict:
         """Save state to persistence dict.
@@ -380,36 +387,41 @@ class LearningWindowManager:
         # --- Learning Window Accumulation ---
         early_submit = False
         if not self._active:
-            # Before starting window, check if backdated start would be in deadtime
+            # Before starting window, check if backdated start would be in deadtime.
+            # If so, anchor the window start to the deadtime end rather than rejecting:
+            # this avoids an infinite skip loop when dt_s < deadtime duration.
             proposed_start_ts = now - dt_s
 
             # Check heating deadtime overlap
             if (
-                not ignore_deadtime_skip 
-                and dt_est.deadtime_heat_reliable 
-                and t_heat_episode_start is not None 
+                not ignore_deadtime_skip
+                and dt_est.deadtime_heat_reliable
+                and t_heat_episode_start is not None
                 and dt_est.deadtime_heat_s is not None
             ):
                 deadtime_end_ts = t_heat_episode_start + dt_est.deadtime_heat_s
                 if proposed_start_ts < deadtime_end_ts:
-                    estimator.learn_skip_count += 1
-                    estimator.learn_last_reason = "skip: window would start in deadtime"
-                    return deadtime_skip_count_a, deadtime_skip_count_b
+                    proposed_start_ts = deadtime_end_ts
 
             # Check cooling deadtime overlap
             if (
-                not ignore_deadtime_skip 
-                and dt_est.deadtime_cool_reliable 
-                and t_cool_episode_start is not None 
+                not ignore_deadtime_skip
+                and dt_est.deadtime_cool_reliable
+                and t_cool_episode_start is not None
                 and dt_est.deadtime_cool_s is not None
             ):
                 deadtime_end_ts = t_cool_episode_start + dt_est.deadtime_cool_s
                 if proposed_start_ts < deadtime_end_ts:
-                    estimator.learn_skip_count += 1
-                    estimator.learn_last_reason = "skip: window would start in deadtime (cool)"
-                    return deadtime_skip_count_a, deadtime_skip_count_b
+                    proposed_start_ts = deadtime_end_ts
 
-            # OK to start window
+            # If the anchored start is still in the future, the deadtime has not
+            # expired yet — emit a single skip and wait.
+            if proposed_start_ts >= now:
+                estimator.learn_skip_count += 1
+                estimator.learn_last_reason = "skip: window start still in deadtime"
+                return deadtime_skip_count_a, deadtime_skip_count_b
+
+            # OK to start window (possibly with anchored start)
             self._active = True
             self._start_ts = proposed_start_ts
             self._T_int_start = current_temp
@@ -417,6 +429,7 @@ class LearningWindowManager:
             self._u_int = 0.0
             self._t_int_s = 0.0
             self._u_first = u_active
+            self._sliding_elapsed_s = 0.0
             # Initialize power variance tracking and record first sample
             self._u_count = 0
             self._u_mean = 0.0
@@ -490,7 +503,11 @@ class LearningWindowManager:
             b_wrong_dir = (u_eff_pre < U_OFF_MAX and dT > 0)
             a_wrong_dir = (u_eff_pre > U_ON_MIN  and dT < 0)
             if b_wrong_dir or a_wrong_dir:
-                if window_dt_min < DT_MAX_MIN:
+                # Accumulate sliding duration cumulatively across consecutive ticks.
+                # Using a per-tick window_dt_min would reset the timer every slide,
+                # making DT_MAX_MIN unreachable when dt_s is small.
+                self._sliding_elapsed_s += dt_s
+                if self._sliding_elapsed_s < DT_MAX_MIN * 60:
                     self._start_ts = now
                     self._T_int_start = current_temp
                     self._T_ext_start = ext_temp
@@ -500,7 +517,7 @@ class LearningWindowManager:
                     estimator.learn_last_reason = f"skip: {label}, sliding start"
                     return deadtime_skip_count_a, deadtime_skip_count_b
                 else:
-                    # DT_MAX_MIN reached with slope still wrong → abandon
+                    # Cumulative DT_MAX_MIN reached with slope still wrong → abandon
                     self.reset()
                     estimator.learn_last_reason = (
                         "skip: B flywheel timeout" if b_wrong_dir else "skip: A deadtime timeout"
