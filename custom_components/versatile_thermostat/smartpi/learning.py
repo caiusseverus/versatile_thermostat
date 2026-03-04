@@ -485,10 +485,14 @@ class ABEstimator:
         # SSE = sum of squared residuals
         sse = sum((yi - (b0 + b1 * xi)) ** 2 for xi, yi in zip(x, y))
 
-        if n <= 2:
+        # Effective sample count: repeated identical values do not add
+        # independent information. Use distinct levels (jumps + 1) as
+        # degrees of freedom to avoid artificially inflating confidence.
+        n_eff = jumps + 1
+        if n_eff <= 2:
             return None, "ols_fail", n
 
-        mse = sse / (n - 2)
+        mse = sse / (n_eff - 2)
         se_b1_sq = mse / ss_xx
         if se_b1_sq <= 0:
             # Perfect fit (no residual variance)
