@@ -1745,6 +1745,7 @@ class SmartPI(CycleManager):
         if self.guards.guard_cut_active:
             self._on_percent = 0.0
             self._last_u_applied = 0.0
+            self.u_prev = 0.0
             return
 
         # --- 1b. HVAC mode transition (HEAT↔COOL) → reset integral ---
@@ -1827,6 +1828,7 @@ class SmartPI(CycleManager):
             )
             # Update Twin Diagnostics even in hysteresis
             self._update_twin_diagnostics(current_temp, ext_current_temp, target_temp, hvac_mode)
+            self.u_prev = self._on_percent
             return
 
         # --- 6. Control Context & Deadband ---
