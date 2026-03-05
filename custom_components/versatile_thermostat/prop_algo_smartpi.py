@@ -1413,12 +1413,14 @@ class SmartPI(CycleManager):
             _LOGGER.warning("%s - Missing target or current temp, force 0", self._name)
             self.ctl.integral = 0.0
             self._on_percent = 0.0
+            self.u_prev = 0.0
             return True
 
         if hvac_mode == VThermHvacMode_OFF:
             self.ctl.reset()
             self._on_percent = 0.0
             self._last_u_applied = 0.0
+            self.u_prev = 0.0
             self.deadband_mgr.in_deadband = False
             self.deadband_mgr.in_near_band = False
             self._output_initialized = True
