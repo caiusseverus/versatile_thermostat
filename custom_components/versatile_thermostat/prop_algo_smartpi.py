@@ -684,7 +684,6 @@ class SmartPI:
             # Convert elapsed time since last calculation for beta-scaling.
             now_ts = time.monotonic()
             dt_min = (now_ts - getattr(self, "_last_calculate_time", now_ts)) / 60.0
-            
             # Use update_realized_power to apply anti-windup using the true e_eff
             self.update_realized_power(u_applied=e_eff, dt_min=dt_min, forced_by_timing=False)
 
@@ -1164,8 +1163,6 @@ class SmartPI:
             return
 
         # 1. Update states
-        self._last_u_applied = val
-        self._last_forced_by_timing = forced_by_timing
         self.u_prev = val
 
         # 2. Skip if no timing info or in deadband
@@ -1973,7 +1970,6 @@ class SmartPI:
 
         # --- 15. Thermal Twin & ETA (diagnostics-only) ---
         self._update_twin_diagnostics(current_temp, ext_current_temp, target_temp, hvac_mode)
-
 
     def _update_twin_diagnostics(
         self,
