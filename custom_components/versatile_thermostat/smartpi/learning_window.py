@@ -525,6 +525,12 @@ class LearningWindowManager:
                     return deadtime_skip_count_a, deadtime_skip_count_b
             # Minimum window duration before attempting slope calculation
             if window_dt_min < WINDOW_MIN_MINUTES:
+                # Keep diagnostics fresh while accumulating the minimum learning window.
+                # Without this, a previous skip reason (e.g. deadtime) can remain visible
+                # for several cycles even after collection has resumed.
+                estimator.learn_last_reason = (
+                    f"window: accumulating ({window_dt_min:.1f}/{WINDOW_MIN_MINUTES:.1f} min)"
+                )
                 return deadtime_skip_count_a, deadtime_skip_count_b
 
             # Try slope quality: submit if robust, extend if not, timeout if limit reached.
