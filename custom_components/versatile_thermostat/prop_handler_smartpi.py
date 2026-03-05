@@ -161,6 +161,13 @@ class SmartPIHandler:
         from datetime import datetime
         from .smartpi.guards import GuardAction
 
+        # When a forced recalculation is requested by the thermostat state machine
+        # (setpoint/hvac/preset changes), close the running cycle first so the cycle-end
+        # callback updates learning context before the next calculate().
+        if force and t.cycle_scheduler and t.cycle_scheduler.is_cycle_running:
+            await t.cycle_scheduler.cancel_cycle()
+            force = False
+
         if t.prop_algorithm:
             # Learning update
             current_temp = t.current_temperature
