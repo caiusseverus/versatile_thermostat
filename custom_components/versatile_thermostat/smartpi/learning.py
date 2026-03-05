@@ -114,7 +114,14 @@ class DeadTimeEstimator:
         """
         Update state machine with new measures.
         """
-        self._tin_history.append((now, tin))
+        # Performance/Redundancy Gate: only append to tin_history if temperature changed
+        # or if more than 60 seconds passed since the last sample.
+        # This prevents redundant points from high-frequency heartbeat triggers
+        # while preserving high-resolution inflection points during transitions.
+        if (not self._tin_history or 
+            abs(tin - self._tin_history[-1][1]) > 0.001 or 
+            now - self._tin_history[-1][0] >= 60.0):
+            self._tin_history.append((now, tin))
         
         # --- Power Transition Detection ---
         

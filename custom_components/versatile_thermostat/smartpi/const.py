@@ -239,7 +239,6 @@ AB_MAD_K = 1.4826         # Sigma scaling factor for MAD
 AB_VAL_TOLERANCE = 1e-12  # Small epsilon
 LEARN_SAMPLE_MAX = 240          # Max samples history (e.g. 4h @ 1min)
 LEARN_Q_HIST_MAX = 200          # History for quantization estimation
-WINDOW_MIN_MINUTES = 10.0       # Min learning window duration (minutes)
 DT_DERIVATIVE_MIN_ABS = 0.05    # Min absolute dT (°C) amplitude guard
 OLS_MIN_JUMPS = 3               # Min temperature level changes for OLS validity
 OLS_T_MIN = 2.5                 # Min t-statistic for slope significance
