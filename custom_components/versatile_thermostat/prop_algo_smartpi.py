@@ -677,15 +677,17 @@ class SmartPI:
         # Anti-windup update is now deferred to on_cycle_completed using e_eff
         pass
 
-    async def on_cycle_completed(self, e_eff: float = None) -> None:
+    async def on_cycle_completed(self, e_eff: float = None, elapsed_ratio: float = 1.0, **_kw) -> None:
         """Handle end of cycle (learning)."""
         if e_eff is not None:
             # We receive the effective power (e_eff) from the tick scheduler here at the end of the cycle.
             # Convert elapsed time since last calculation for beta-scaling.
             now_ts = time.monotonic()
             dt_min = (now_ts - getattr(self, "_last_calculate_time", now_ts)) / 60.0
-            # Use update_realized_power to apply anti-windup using the true e_eff
-            self.update_realized_power(u_applied=e_eff, dt_min=dt_min, forced_by_timing=False)
+            # Use update_realized_power to apply anti-windup using the true e_eff.
+            # elapsed_ratio tells us what fraction of the full cycle actually ran,
+            # so the anti-windup can normalize the comparison with on_percent.
+            self.update_realized_power(u_applied=e_eff, dt_min=dt_min, forced_by_timing=False, elapsed_ratio=elapsed_ratio)
 
         # Cycle accepted -> Count it
         self._cycles_since_reset += 1
@@ -1150,23 +1152,31 @@ class SmartPI:
         dt_min: float = 0.0,
         forced_by_timing: bool = False,
         realized_percent: float | None = None,
+        elapsed_ratio: float = 1.0,
         **_kwargs
     ) -> None:
         """
         Adjust integral term based on REALIZED power (Energy Awareness).
         Called by handler if actual heater output differed from command.
+
+        Args:
+            u_applied: instantaneous duty cycle during the cycle's actual lifetime.
+            elapsed_ratio: fraction of the full cycle that actually ran (0..1).
+                For a complete cycle elapsed_ratio=1.0; for a cycle interrupted
+                at 50% of its duration elapsed_ratio=0.5.
+                The energy actually delivered relative to a full cycle is
+                u_applied * elapsed_ratio, which is comparable to on_percent.
         """
         # Resolve argument name differences for compatibility with various tests
         val = realized_percent if realized_percent is not None else u_applied
         if val is None:
-            # Handle rare cases where it might be called with positional arg only
             return
 
-        # 1. Skip if no timing info or in deadband
+        # Skip if no timing info or in deadband
         if dt_min <= 0 or self._in_deadband or abs(self.Ki) < 1e-6:
             return
 
-        # 3. Tracking Anti-Windup Logic
+        # Tracking Anti-Windup Logic
         # If forced by timing, we skip tracking to avoid artificial integral drift
         if forced_by_timing:
             self._last_aw_du = 0.0
@@ -1182,7 +1192,11 @@ class SmartPI:
         elif self._last_u_cmd < 0.001 and self._last_u_limited <= 0.001:
             u_aw_ref = self._last_u_cmd
 
-        du = val - u_aw_ref
+        # Normalize e_eff to full-cycle energy: val is the instantaneous duty
+        # over the elapsed window, multiply by elapsed_ratio to get the energy
+        # fraction relative to a complete cycle — comparable to u_aw_ref.
+        val_normalized = val * elapsed_ratio
+        du = val_normalized - u_aw_ref
         self._last_aw_du = du
 
         # Energy Awareness: Adjust integral if applied power differed from reference.
