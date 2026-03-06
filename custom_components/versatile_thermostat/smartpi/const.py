@@ -90,7 +90,7 @@ GOVERNANCE_MATRIX = {
         "gains": (GovernanceDecision.ADAPT_ON, FreezeReason.NONE),
     },
     GovernanceRegime.NEAR_BAND: {
-        "thermal": (GovernanceDecision.HARD_FREEZE, FreezeReason.NEAR_BAND),
+        "thermal": (GovernanceDecision.ADAPT_ON, FreezeReason.NONE),
         "gains": (GovernanceDecision.SOFT_FREEZE_DOWN, FreezeReason.NEAR_BAND),
     },
     GovernanceRegime.DEAD_BAND: {
