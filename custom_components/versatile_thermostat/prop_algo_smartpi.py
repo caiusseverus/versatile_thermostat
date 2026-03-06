@@ -1162,10 +1162,7 @@ class SmartPI:
             # Handle rare cases where it might be called with positional arg only
             return
 
-        # 1. Update states
-        self.u_prev = val
-
-        # 2. Skip if no timing info or in deadband
+        # 1. Skip if no timing info or in deadband
         if dt_min <= 0 or self._in_deadband or abs(self.Ki) < 1e-6:
             return
 

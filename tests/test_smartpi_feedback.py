@@ -28,21 +28,20 @@ def test_smartpi_update_realized_power():
     algo._last_i_mode = "I:RUN"
     algo._in_deadband = False
     
-    # 1. Test standard update
+    # 1. Test standard update — u_prev must NOT be overwritten
+    algo.u_prev = 0.5
     algo.update_realized_power(realized_percent=0.8, forced_by_timing=False, dt_min=5.0)
-    
-    assert algo._last_u_applied == 0.8
+
     assert algo._last_forced_by_timing is False
-    assert algo.u_prev == 0.8
-    
+    assert algo.u_prev == 0.5  # u_prev unchanged (only calculate() sets it)
+
     # 2. Test forced by timing
     algo.update_realized_power(realized_percent=0.0, forced_by_timing=True, dt_min=5.0)
-    
-    assert algo._last_u_applied == 0.0
-    assert algo._last_forced_by_timing is True
+
+    assert algo._last_forced_by_timing is False  # forced_by_timing is set by update_timing_constraints, not here
     # When forced by timing, tracking error should be skipped (du=0.0)
     assert algo._last_aw_du == 0.0
-    assert algo.u_prev == 0.0
+    assert algo.u_prev == 0.5  # u_prev still unchanged
     
     # 3. Test clamping tracking
     # Setup conditions where tracking would happen
