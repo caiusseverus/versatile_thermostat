@@ -1827,10 +1827,12 @@ class SmartPI:
         """
         # Compatibility handling for old signature: calculate(t, c, dt_min, now, hvac_mode)
         # In old calls: ext_current_temp=dt_min, hvac_mode=now, slope=hvac_mode
-        if hvac_mode is not None and not isinstance(hvac_mode, VThermHvacMode) and isinstance(slope, VThermHvacMode):
-            # old call detected
-            hvac_mode = slope
-            slope = None
+        if isinstance(slope, VThermHvacMode) and not isinstance(hvac_mode, VThermHvacMode):
+            # old call: positional args were (target, current, ext, slope_float, hvac_mode)
+            # hvac_mode param received the slope float (or None), slope param received the VThermHvacMode
+            _slope_val = hvac_mode  # save the float (or None) that landed in hvac_mode
+            hvac_mode = slope       # move VThermHvacMode to its proper param
+            slope = _slope_val if isinstance(_slope_val, (int, float)) else None
         elif hvac_mode is None and len(args) > 0 and isinstance(args[0], VThermHvacMode):
             # another old call variant
             hvac_mode = args[0]
