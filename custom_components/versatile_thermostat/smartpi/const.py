@@ -314,3 +314,53 @@ AUTOCALIB_EXIT_NEW_OBS_MIN = 1            # Minimum new observations (a/b) for p
 
 # --- Feed-Forward Gate Constants ---
 # Soft gate (Step 2) has been removed.
+
+# --- FFv2 Governance Enums ---
+
+class ABConfidenceState(str, Enum):
+    """Confidence state for a,b model parameters."""
+    AB_OK = "ab_ok"
+    AB_DEGRADED = "ab_degraded"
+    AB_BAD = "ab_bad"
+
+
+class FFCoherenceState(str, Enum):
+    """Coherence state between u_hold_emp and u_ff_ab."""
+    OK = "ok"
+    WARN = "warn"
+    BAD = "bad"
+
+
+class EpisodeQuality(str, Enum):
+    """Quality label for hold-learning episodes (not a command regime)."""
+    EXCITED_STABLE = "excited_stable"
+    HOLD_CANDIDATE = "hold_candidate"
+    INVALID_FOR_LEARNING = "invalid_for_learning"
+
+
+# --- FFv2 Normative Constants ---
+
+# Trim slow correction
+FF_TRIM_RHO = 0.15        # Max trim authority relative to u_ff_ab (dimensionless ratio)
+FF_TRIM_LAMBDA = 0.02     # Trim EMA learning rate per admissible episode
+FF_TRIM_EPSILON = 0.02    # Min u_ff_ab denominator for relative budget (avoids div-by-~0)
+
+# Hold estimator
+FF_HOLD_LAMBDA = 0.05     # u_hold_emp EMA learning rate per admissible episode
+FF_HOLD_E_MAX_C = 0.2     # Max |error| (degC) for a cycle to be admissible
+# Slope threshold: 0.03 degC/10min expressed in degC/h (the unit of last_temperature_slope)
+FF_HOLD_SLOPE_MAX_H = 0.18  # 0.03 degC/10min = 0.18 degC/h
+FF_HOLD_DU_MAX = 0.15     # Max Q95-Q05 spread of u_applied over the window
+FF_HOLD_MIN_CYCLES = 3    # Minimum consecutive admissible cycles for a valid episode
+
+# AB confidence & fallback
+AB_BAD_PERSIST_CYCLES = 3           # Cycles in AB_BAD before fallback activates
+AB_FALLBACK_MIN_CONFIDENCE = 0.3    # Min hold_confidence to use u_hold_emp as fallback
+
+# Taper modulation
+FF_TAPER_RHO_MAX = 0.25   # Max FF reduction by taper (floor = 1 - 0.25 = 0.75)
+
+# Coherence thresholds
+FF_COH_WARN_THRESHOLD = 0.10   # |e_ff_coh| above this → WARN
+FF_COH_BAD_THRESHOLD = 0.20    # |e_ff_coh| above this → BAD
+FF_COH_MIN_CONFIDENCE = 0.2    # Min hold_confidence before coherence is evaluated

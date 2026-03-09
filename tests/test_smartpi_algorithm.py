@@ -283,7 +283,7 @@ def test_abestimator_learn_a_on():
         )
 
     assert est.learn_ok_count_a > 0
-    assert "learned a (Median)" in est.learn_last_reason
+    assert "learned a (median)" in est.learn_last_reason
     # Median estimation with noise might be slightly off, relax tolerance
     assert math.isclose(est.a, target_a, rel_tol=0.35)
 
@@ -899,8 +899,14 @@ async def test_update_learning_skips_when_resume_counter_active():
 
 
 def test_skip_learning_cycles_persisted():
-    """Test that skip timestamp is persisted in save/load state."""
-    smartpi1 = SmartPI(hass=MagicMock(), 
+    """Test save_state includes learning_resume_ts; load_state intentionally clears it.
+
+    The learning_resume_ts is saved (for diagnostics) but NOT restored on load:
+    a stale resume-ts from the previous session would block learning for its full
+    remaining duration after every restart. Post-restart freeze is handled separately
+    by _startup_grace_period.
+    """
+    smartpi1 = SmartPI(hass=MagicMock(),
         cycle_min=10,
         minimal_activation_delay=0,
         minimal_deactivation_delay=0,
@@ -920,7 +926,7 @@ def test_skip_learning_cycles_persisted():
     assert math.isclose(saved["learning_resume_ts"], wall_ts_approx, abs_tol=1.0)
 
     # Load in new instance
-    smartpi2 = SmartPI(hass=MagicMock(), 
+    smartpi2 = SmartPI(hass=MagicMock(),
         cycle_min=10,
         minimal_activation_delay=0,
         minimal_deactivation_delay=0,
@@ -928,13 +934,9 @@ def test_skip_learning_cycles_persisted():
         saved_state=saved
     )
 
-    # Skip timestamp should be restored as monotonic
-    # It won't be exactly mono_ts because of time.time() vs monotonic drift/offset,
-    # but the duration remaining should be correct.
-    # We can check if the remaining time matches.
-    remaining1 = mono_ts - time.monotonic()
-    remaining2 = smartpi2._learning_resume_ts - time.monotonic()
-    assert math.isclose(remaining1, remaining2, abs_tol=0.1)
+    # The resume timestamp must NOT be carried over to the new session.
+    # load_state() deliberately discards it to avoid blocking learning after restart.
+    assert smartpi2._learning_resume_ts is None
 
 
 def test_skip_learning_cycles_in_diagnostics():
@@ -1002,20 +1004,21 @@ def test_abestimator_no_saturation_bias():
 
     est.b = 0.002
 
-    # Feed points that imply a slope > A_MAX (0.1)
+    # Feed points that imply a slope > A_MAX (0.5)
     # y = dT/dt + b*delta.
-    # If we want a_meas ~ 0.2, and u=0.5, we need y = 0.1
-    # Let's say dT=0.08, b=0.002, delta=10 -> y = 0.08 + 0.02 = 0.10.
-    # a_slope = 0.10 / 0.5 = 0.20 > A_MAX(0.1)
+    # If we want a_meas ~ 1.2, and u=0.5, we need y = 0.60
+    # Let's say dT=0.58, b=0.002, delta=10 -> y = 0.58 + 0.02 = 0.60.
+    # a_slope = 0.60 / 0.5 = 1.20 > A_MAX(0.5)
 
     for _ in range(7):
-        est.learn(dT_int_per_min=0.08, u=0.5, t_int=18.0, t_ext=8.0)  # delta=10
+        # Relax max_abs_dT_per_min: we test clamping behaviour, not the physics gate
+        est.learn(dT_int_per_min=0.58, u=0.5, t_int=18.0, t_ext=8.0, max_abs_dT_per_min=2.0)
 
     # 1. est.a should be clamped
     assert est.a <= est.A_MAX, f"a should be clamped: {est.a}"
 
     # 2. a_meas_hist should contain raw points implying high slope
-    # Last measurement should be around 0.20 (calculated above)
+    # Last measurement should be around 1.2 (calculated above)
     last_meas = est.a_meas_hist[-1]
     assert last_meas > est.A_MAX, f"Stored history should imply high slope: {last_meas}"
 
@@ -1029,17 +1032,18 @@ def test_abestimator_no_saturation_bias():
 
     for i in range(7):
         u_val = 0.5 + i * 0.01
-        # Target a=0.20
-        # dt = 0.20*u - 0.02
+        # Target a=1.0 (> A_MAX=0.5); relax physics gate for this clamping test
+        # dt = 1.0*u - 0.02
         est.learn(
-            dT_int_per_min=(0.20 * u_val - 0.02),
+            dT_int_per_min=(1.0 * u_val - 0.02),
             u=u_val,
             t_int=18.0,
-            t_ext=8.0
+            t_ext=8.0,
+            max_abs_dT_per_min=2.0,
         )
     assert est.a <= est.A_MAX
 
-    # Check median of history is high
+    # Check median of history is high (raw, not clamped)
     med = statistics.median(est.a_meas_hist)
     assert med > est.A_MAX
 

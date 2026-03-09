@@ -63,30 +63,30 @@ class DeadTimeEstimator:
         self.deadtime_cool_s: float | None = None
         self.deadtime_heat_reliable: bool = False
         self.deadtime_cool_reliable: bool = False
-        
+
         # Configuration
         self.min_off_time_seconds = 600.0
         self.min_power_heat_threshold = 0.80
         self.min_power_cool_threshold = 0.80
         self.detection_threshold = 0.05
         self.timeout_seconds = 14400.0  # 4 hours timeout for slow systems with inertia
-        
+
         # State
         self.state = "OFF"  # OFF, HEATING, COOLING, WAITING_HEAT_RESPONSE, WAITING_COOL_RESPONSE
         self.last_power = 0.0
         self.last_stop_time: float | None = None
-        
+
         # Detection ephemeral data
         self.heat_start_time: float | None = None
         self.heat_start_temp: float | None = None
-        
+
         self.cool_start_time: float | None = None
         self.cool_peak_temp: float | None = None
-        
+
         # History for averaging
         self._history_heat = deque(maxlen=6)
         self._history_cool = deque(maxlen=6)
-        
+
         # History for external access (SmartPI learning)
         self._tin_history: Deque[Tuple[float, float]] = deque(maxlen=300)
 
@@ -118,29 +118,27 @@ class DeadTimeEstimator:
         # or if more than 60 seconds passed since the last sample.
         # This prevents redundant points from high-frequency heartbeat triggers
         # while preserving high-resolution inflection points during transitions.
-        if (not self._tin_history or 
-            abs(tin - self._tin_history[-1][1]) > 0.001 or 
-            now - self._tin_history[-1][0] >= 60.0):
+        if not self._tin_history or abs(tin - self._tin_history[-1][1]) > 0.001 or now - self._tin_history[-1][0] >= 60.0:
             self._tin_history.append((now, tin))
-        
+
         # --- Power Transition Detection ---
-        
+
         # 0 -> >0 (Heat Start)
         if self.last_power <= 0.01 and u_applied > 0.01:
             allow_start = True
-            
+
             # 1. Check Power Level
             if u_applied < self.min_power_heat_threshold:
                 allow_start = False
                 _LOGGER.debug("DeadTime: Heat Start ignored (Power %.2f < %s)", u_applied, self.min_power_heat_threshold)
-            
+
             # 2. Check Min OFF Time
             if allow_start and self.last_stop_time is not None:
                 off_duration = now - self.last_stop_time
                 if off_duration < self.min_off_time_seconds:
                     allow_start = False
                     _LOGGER.debug("DeadTime: Heat Start ignored (OFF duration %.0fs < %s)", off_duration, self.min_off_time_seconds)
-            
+
             if allow_start:
                 self.heat_start_time = now
                 self.heat_start_temp = tin
@@ -152,7 +150,7 @@ class DeadTimeEstimator:
         # >0 -> 0 (Cool Start)
         elif self.last_power > 0.01 and u_applied <= 0.01:
             self.last_stop_time = now
-            
+
             if self.last_power < self.min_power_cool_threshold:
                 self.state = "COOLING" # Ignore
                 _LOGGER.debug("DeadTime: Cool Start ignored (Prev Power %.2f < %s)", self.last_power, self.min_power_cool_threshold)
@@ -163,7 +161,7 @@ class DeadTimeEstimator:
                 _LOGGER.debug("DeadTime: State -> WAITING_COOL_RESPONSE (temp=%.3f)", tin)
 
         # --- State Logic ---
-        
+
         # Abort condition (3.B): if power state reverses while waiting
         # This means the setpoint changed and we shouldn't wait for a response anymore
         if self.state == "WAITING_HEAT_RESPONSE" and u_applied <= 0.01:
@@ -174,11 +172,11 @@ class DeadTimeEstimator:
             _LOGGER.debug("DeadTime: Aborting %s because power rose to %.2f", self.state, u_applied)
             self.state = "HEATING"
             self.cool_start_time = None
-        
+
         if self.state == "WAITING_HEAT_RESPONSE":
             if self.heat_start_time is not None:
                 elapsed = now - self.heat_start_time
-                
+
                 # Check Timeout
                 if elapsed > self.timeout_seconds:
                     self.state = "HEATING"
@@ -195,18 +193,18 @@ class DeadTimeEstimator:
                             if v_hist <= self.heat_start_temp + 0.01:
                                 inflection_time = t_hist
                                 break
-                            
+
                         # True deadtime is from heat_start_time to inflection_time
                         dt = max(0.0, inflection_time - self.heat_start_time)
-                        
+
                         self._add_sample_heat(dt)
                         self.state = "HEATING"
                         _LOGGER.info("SmartPI: Heat Deadtime detected = %.1fs (ascension delayed by %.1fs)", dt, now - inflection_time)
-        
+
         elif self.state == "WAITING_COOL_RESPONSE":
             if self.cool_start_time is not None:
                 elapsed = now - self.cool_start_time
-                
+
                 # Check Timeout
                 if elapsed > self.timeout_seconds:
                     self.state = "COOLING"
@@ -215,7 +213,7 @@ class DeadTimeEstimator:
                     # Peak update
                     if tin > self.cool_peak_temp:
                         self.cool_peak_temp = tin
-                    
+
                     # Drop detection
                     delta = self.cool_peak_temp - tin
                     if delta >= self.detection_threshold:
@@ -228,13 +226,13 @@ class DeadTimeEstimator:
                             if v_hist >= self.cool_peak_temp - 0.01:
                                 inflection_time = t_hist
                                 break
-                                
+
                         dt = max(0.0, inflection_time - self.cool_start_time)
 
                         self._add_sample_cool(dt)
                         self.state = "COOLING"
                         _LOGGER.info("SmartPI: Cool Deadtime detected = %.1fs (drop delayed by %.1fs)", dt, now - inflection_time)
-                        
+
         # Default states if running without detection
         elif u_applied > 0.01 and self.state == "OFF":
             self.state = "HEATING"
@@ -280,7 +278,7 @@ class DeadTimeEstimator:
         self.deadtime_cool_s = state.get("deadtime_cool_s")
         self.deadtime_heat_reliable = bool(state.get("deadtime_heat_reliable", False))
         self.deadtime_cool_reliable = bool(state.get("deadtime_cool_reliable", False))
-        
+
         hh = state.get("history_heat", [])
         self._history_heat = deque(hh, maxlen=6)
         hc = state.get("history_cool", [])
@@ -306,9 +304,9 @@ class DeadTimeEstimator:
 class ABEstimator:
     """
     Robust Online Estimator for a and b using Continuous approach:
-    
+
     Model: dT/dt = a*u - b*(T_int - T_ext)
-    
+
     1. OLS is used for dT/dt calculation over a sliding window.
     2. Median + MAD is used for robust a and b parameter estimation from history.
     """
@@ -324,7 +322,7 @@ class ABEstimator:
 
         # Robust bounds
         self.A_MIN: float = 1e-5
-        self.A_MAX: float = 0.15
+        self.A_MAX: float = 0.5
         self.B_MIN: float = 1e-5
         self.B_MAX: float = 0.05
 
@@ -336,7 +334,7 @@ class ABEstimator:
         # Stability tracking for a and b (tau) - used for reliability check
         self._b_hat_hist: Deque[float] = deque(maxlen=20)
         self._a_hat_hist: Deque[float] = deque(maxlen=20)
-        
+
         # Counters
         self.learn_ok_count = 0  # Total successful updates
         self.learn_ok_count_a = 0
@@ -774,12 +772,12 @@ class ABEstimator:
         self.learn_ok_count_a = int(state.get("learn_ok_count_a", 0))
         self.learn_ok_count_b = int(state.get("learn_ok_count_b", 0))
         self.learn_skip_count = int(state.get("learn_skip_count", 0))
-        
+
         amh = state.get("a_meas_hist", [])
         self.a_meas_hist = deque(amh, maxlen=AB_HISTORY_SIZE)
         bmh = state.get("b_meas_hist", [])
         self.b_meas_hist = deque(bmh, maxlen=AB_HISTORY_SIZE)
-        
+
         # Restore filtered histories for tau reliability
         a_hat = state.get("a_hat_hist", [])
         self._a_hat_hist = deque(a_hat, maxlen=20)

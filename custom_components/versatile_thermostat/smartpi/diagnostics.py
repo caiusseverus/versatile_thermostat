@@ -49,6 +49,10 @@ ESSENTIAL_KEYS = {
     "autocalib_snapshot_age_h",
     # Sensor temperature
     "sensor_temperature",
+    # FFv2 essential keys
+    "u_ff_eff",
+    "ab_confidence_state",
+    "ff_coherence_state",
 }
 
 def build_diagnostics(algo: SmartPI, debug_mode: bool = False) -> Dict[str, Any]:
@@ -118,6 +122,30 @@ def build_diagnostics(algo: SmartPI, debug_mode: bool = False) -> Dict[str, Any]
         "ff_warmup_ok_count": int(algo.ff_warmup_ok_count),
         "ff_warmup_cycles": int(algo.ff_warmup_cycles),
         "ff_scale_unreliable_max": round(algo.ff_scale_unreliable_max, 3),
+        # FFv2 signal chain (source of truth: u_ff_eff)
+        "u_ff_ab": round(algo._last_ff_result.u_ff_ab, 6) if algo._last_ff_result else 0.0,
+        "u_ff_trim": round(algo._ff_trim.u_ff_trim, 6),
+        "u_ff_base": round(algo._last_ff_result.u_ff_base, 6) if algo._last_ff_result else 0.0,
+        "u_ff_eff": round(algo._last_ff_result.u_ff_eff, 6) if algo._last_ff_result else 0.0,
+        "ff_taper_alpha": round(algo._last_ff_result.ff_taper_alpha, 6) if algo._last_ff_result else 1.0,
+        # FFv2 hold estimator
+        "u_hold_emp": round(algo._hold_estimator.u_hold_emp, 6),
+        "u_hold_meas": round(algo._hold_estimator.u_hold_meas, 6),
+        "hold_confidence": round(algo._hold_estimator.hold_confidence, 4),
+        # FFv2 coherence & confidence
+        "ff_coherence_error": round(algo._ff_coherence.error, 6),
+        "ff_coherence_state": algo._ff_coherence.state.value,
+        "ab_confidence_state": algo._ab_confidence.state.value,
+        # FFv2 freeze reasons
+        "trim_freeze_reason": algo._ff_trim._freeze_reason,
+        "hold_freeze_reason": algo._hold_estimator._freeze_reason,
+        # FFv2 bumpless diagnostics
+        "bumpless_requested_delta": round(algo._last_bumpless_requested, 6),
+        "bumpless_applied_delta": round(algo._last_bumpless_applied, 6),
+        "bumpless_clamped": algo._last_bumpless_clamped,
+        # FFv2 regime tracking
+        "regime_prev": algo._last_regime_prev,
+        "sat_persistent_cycles": algo._sat_persistent_cycles,
         "cycles_since_reset": int(algo.cycles_since_reset),
         "on_percent": round(algo.on_percent, 6),
         "cycle_min": round(algo.cycle_min, 3),

@@ -93,7 +93,17 @@ from .smartpi.learning_window import LearningWindowManager
 from .smartpi.deadband import DeadbandManager
 from .smartpi.calibration import CalibrationManager
 from .smartpi.gains import GainScheduler
-from .smartpi.feedforward import apply_ff_gate
+from .smartpi.feedforward import compute_ff, FFResult
+from .smartpi.ff_hold_estimator import HoldEstimator
+from .smartpi.ff_trim import FFTrim
+from .smartpi.ff_taper import FFTaper
+from .smartpi.ff_ab_confidence import ABConfidence
+from .smartpi.ff_coherence import FFCoherence
+from .smartpi.const import (
+    ABConfidenceState,
+    FFCoherenceState,
+    FF_HOLD_MIN_CYCLES,
+)
 from .smartpi.timestamp_utils import convert_monotonic_to_wall_ts, convert_wall_to_monotonic_ts
 
 _LOGGER = logging.getLogger(__name__)
@@ -272,6 +282,28 @@ class SmartPI:
 
         # --- AutoCalibTrigger (supervision) ---
         self.autocalib = AutoCalibTrigger(name)
+
+        # --- FFv2: hold estimator, trim, taper, ab-confidence, coherence ---
+        self._hold_estimator = HoldEstimator()
+        self._ff_trim = FFTrim()
+        self._ff_taper = FFTaper()
+        self._ab_confidence = ABConfidence()
+        self._ff_coherence = FFCoherence()
+
+        # Last complete FFResult (used by diagnostics and on_cycle_completed)
+        self._last_ff_result: FFResult | None = None
+
+        # Bumpless transfer diagnostics (FFv2)
+        self._last_bumpless_requested: float = 0.0
+        self._last_bumpless_applied: float = 0.0
+        self._last_bumpless_clamped: bool = False
+        self._last_regime_prev: str = ""
+
+        # Persistent saturation counter
+        self._sat_persistent_cycles: int = 0
+
+        # FFv2 post-reboot freeze countdown (cycles remaining before unfreeze)
+        self._ff_v2_reboot_freeze_remaining: int = 0
 
         # --- Safety-First Governance (Delegated to self.gov) ---
         if saved_state:
@@ -688,6 +720,21 @@ class SmartPI:
             # elapsed_ratio tells us what fraction of the full cycle actually ran,
             # so the anti-windup can normalize the comparison with on_percent.
             self.update_realized_power(u_applied=e_eff, dt_min=dt_min, forced_by_timing=False, elapsed_ratio=elapsed_ratio)
+
+        # --- FFv2: attempt hold learning and trim update ---
+        if self._last_ff_result is not None and not self._hold_estimator._frozen:
+            learned = self._hold_estimator.try_learn()
+            if learned:
+                # Update coherence check
+                self._ff_coherence.evaluate(
+                    u_hold_emp=self._hold_estimator.u_hold_emp,
+                    u_ff_ab=self._last_ff_result.u_ff_ab,
+                    hold_confidence=self._hold_estimator.hold_confidence,
+                )
+                # Update trim if not frozen
+                if not self._ff_trim._frozen:
+                    delta_hold = self._hold_estimator.u_hold_meas - self._last_ff_result.u_ff_ab
+                    self._ff_trim.update(delta_hold, self._last_ff_result.u_ff_ab)
 
         # Cycle accepted -> Count it
         self._cycles_since_reset += 1
@@ -1251,6 +1298,9 @@ class SmartPI:
             "gs_state": self.gain_scheduler.save_state() if hasattr(self.gain_scheduler, "save_state") else {},
             "twin_state": self.twin.save_state(),
             "guards_state": self.guards.save_state(),
+            # FFv2 components
+            "ff_v2_hold": self._hold_estimator.save_state(),
+            "ff_v2_trim": self._ff_trim.save_state(),
         }
         return state
 
@@ -1419,6 +1469,15 @@ class SmartPI:
         # Load Guard State
         self.guards.load_state(migrated.get("guards_state", {}))
         self.autocalib.load_state(migrated.get("ac_state", {}))
+
+        # Load FFv2 state (hold estimator & trim); freeze for a few cycles after reboot
+        self._hold_estimator.load_state(migrated.get("ff_v2_hold", {}))
+        self._ff_trim.load_state(migrated.get("ff_v2_trim", {}))
+        # Freeze hold learning and trim briefly after reboot (spec section 14.2).
+        # They will be unfrozen after FF_HOLD_MIN_CYCLES cycles.
+        self._hold_estimator.freeze("reboot")
+        self._ff_trim.freeze("reboot")
+        self._ff_v2_reboot_freeze_remaining = FF_HOLD_MIN_CYCLES
 
     def _validate_and_handle_off(
         self,
@@ -1617,9 +1676,9 @@ class SmartPI:
         """Calculate gains and feedforward, and handles integrator hold.
 
         Returns:
-            Tuple of (u_ff, integrator_hold).
+            Tuple of (u_ff_eff, integrator_hold).
         """
-        # Store the value before the update for bumpless transfer.
+        # Store u_pi before gains update for bumpless transfer on gain change.
         kp_old = self.Kp
         ki_old = self.Ki
         u_pi_old = kp_old * e_p + ki_old * self.ctl.integral
@@ -1637,79 +1696,95 @@ class SmartPI:
             governance_decision=gov_decision_g,
         )
 
-        # Condition for bumpless transfer on significant gain change.
-        # Skip if this is the first run after resume/startup, or if a large setpoint
-        # change just reset the integral — bumpless must not overwrite that reset.
+        # Bumpless transfer on significant gain change (unchanged from pre-FFv2).
         if not is_first_run and not setpoint_changed and (abs(self.Kp - kp_old) > 1e-6 or abs(self.Ki - ki_old) > 1e-9):
             self.ctl.adjust_integral_for_bumpless_transfer(u_pi_old, self.Kp, self.Ki, e_p)
 
-        # Gains updated within GainScheduler component
+        # --- FFv2: AB confidence & fallback ---
+        self._ab_confidence.evaluate(
+            tau_reliable=self._tau_reliable,
+            learn_ok_count_a=self.est.learn_ok_count_a,
+            learn_ok_count_b=self.est.learn_ok_count_b,
+        )
+        ab_fallback = self._ab_confidence.get_ff_fallback(
+            self._hold_estimator.u_hold_emp,
+            self._hold_estimator.hold_confidence,
+        )
 
-        # Feed Forward
-        u_ff = 0.0
-        if ext_current_temp is not None:
+        # --- FFv2: compute k_ff (0 in COOL mode or when model not ready) ---
+        if hvac_mode == VThermHvacMode_COOL:
+            k_ff = 0.0
+            warmup_scale = 0.0
+        else:
             if self.est.learn_ok_count_a >= 10 and self._tau_reliable:
                 k_ff = clamp(self.est.b / max(self.est.a, 1e-6), 0.0, 3.0)
-                u_ff = clamp(k_ff * (target_temp_filt - ext_current_temp), 0.0, 1.0)
+            else:
+                k_ff = 0.0
+            learn_scale = clamp(self.est.learn_ok_count / float(self.ff_warmup_ok_count), 0.0, 1.0)
+            time_scale = clamp(self._cycles_since_reset / float(self.ff_warmup_cycles), 0.0, 1.0)
+            reliable_cap = 1.0 if self._tau_reliable else self.ff_scale_unreliable_max
+            warmup_scale = clamp(reliable_cap * learn_scale * time_scale, 0.0, 1.0)
 
-        if hvac_mode == VThermHvacMode_COOL:
-            u_ff = 0.0
+        # Save previous FF reason before computing the new FFResult
+        prev_ff_reason = self._last_ff_reason
 
-        # FF Warmup
-        learn_scale = clamp(self.est.learn_ok_count / float(self.ff_warmup_ok_count), 0.0, 1.0)
-        time_scale = clamp(self._cycles_since_reset / float(self.ff_warmup_cycles), 0.0, 1.0)
-        reliable_cap = 1.0 if self._tau_reliable else self.ff_scale_unreliable_max
-        u_ff *= clamp(reliable_cap * learn_scale * time_scale, 0.0, 1.0)
-
-        # FF gating (hard gate only)
-        self._last_ff_raw = u_ff  # Store raw value before gating
-        prev_ff_reason = self._last_ff_reason  # Save previous cycle's FF reason before update
-        ff_result = apply_ff_gate(
-            u_ff_raw=u_ff,
+        # --- FFv2: full FF computation via orchestrator ---
+        ff_result = compute_ff(
+            k_ff=k_ff,
+            target_temp_filt=target_temp_filt,
+            ext_temp=ext_current_temp,
+            warmup_scale=warmup_scale,
+            trim=self._ff_trim,
+            taper=self._ff_taper,
+            regime=self.gov.regime,
             error=error,
+            near_band_below_deg=self.deadband_mgr.near_band_below_deg,
             near_band_above_deg=self.deadband_mgr.near_band_above_deg,
+            ab_fallback=ab_fallback,
         )
-        u_ff_eff = ff_result.u_ff_eff
+        self._last_ff_result = ff_result
+        self._last_ff_raw = ff_result.ff_raw
         self._last_ff_reason = ff_result.ff_reason
 
-        # Asymmetric bumpless on FF increase.
-        # Skip if this is the first run after resume/startup, or if setpoint changed
-        # (integral was just reset; applying bumpless here would undo that reset).
-        #
-        # Additional guards:
-        # 1. prev_ff_reason == "ff_cut_above_setpoint": FF was gated off because T > SP.
-        #    The FF jump is a gate opening, not a physical change. With small Ki the resulting
-        #    delta-I would be enormous ( delta_I = delta_u_ff / Ki ). Skip bumpless.
-        # 2. Last integrator mode was SKIP / HOLD / FREEZE: the integral is under explicit
-        #    control; perturbing it via bumpless here would contradict that decision.
-        # 3. cycles_since_reset < ff_warmup_cycles: during the FF ramp-up phase, u_ff rises
-        #    artificially by one warmup step per cycle. Applying bumpless here would drive
-        #    the integral by -d_uff/Ki per cycle, which with small Ki is enormous (e.g. -48°C·min)
-        d_uff = u_ff_eff - self.ctl.u_ff
+        # --- FFv2: generalised bidirectional bumpless FF transfer ---
+        # Guards (same as pre-FFv2 plus bidirectional threshold):
+        #   - first run or setpoint change: integral was just reset — skip
+        #   - tiny delta (< 0.01): noise — skip
+        #   - Ki too small: delta-I would be enormous — skip
+        #   - integrator frozen (I:SKIP/HOLD/FREEZE): under explicit control — skip
+        #   - warmup: FF rising artificially — skip
+        #   - gate just opened: large jump not from physical change — skip
+        d_uff = ff_result.u_ff_eff - self.ctl.u_ff
         _i_mode_frozen = any(
             self.ctl.last_i_mode.startswith(p) for p in ("I:SKIP", "I:HOLD", "I:FREEZE")
         )
-        if (
-            not is_first_run
-            and not setpoint_changed
-            and d_uff > 0.05
-            and self.Ki > KI_MIN
-            and not self.deadband_mgr.in_deadband
-            and prev_ff_reason != "ff_cut_above_setpoint"
-            and not _i_mode_frozen
-            and self._cycles_since_reset >= self.ff_warmup_cycles  # FF must be stable (past warmup)
-        ):
+        skip_bumpless = (
+            is_first_run
+            or setpoint_changed
+            or abs(d_uff) < 0.01
+            or self.Ki <= KI_MIN
+            or _i_mode_frozen
+            or self._cycles_since_reset < self.ff_warmup_cycles
+            or prev_ff_reason == "ff_cut_above_setpoint"
+        )
+        self._last_bumpless_requested = 0.0
+        self._last_bumpless_applied = 0.0
+        self._last_bumpless_clamped = False
+
+        if not skip_bumpless:
+            u_pi_before = self.ctl.u_pi
             target_u_pi = self.ctl.u_pi - d_uff
             self.ctl.adjust_integral_for_bumpless_transfer(target_u_pi, self.Kp, self.Ki, e_p)
-
-        u_ff = u_ff_eff
+            self._last_bumpless_requested = d_uff
+            self._last_bumpless_applied = self.ctl.u_pi - u_pi_before
+            self._last_bumpless_clamped = abs(self._last_bumpless_requested + self._last_bumpless_applied) > 0.01
 
         if ff_result.ff_reason == "ff_cut_above_setpoint":
             _LOGGER.debug("%s - FF disabled (above setpoint)", self._name)
 
         integrator_hold = gov_decision_g == GovernanceDecision.HARD_FREEZE
 
-        return u_ff, integrator_hold
+        return ff_result.u_ff_eff, integrator_hold
 
     def _apply_soft_constraints(
         self,
@@ -1867,6 +1942,9 @@ class SmartPI:
             integrator_hold = True
 
         # --- 7. Governance Decision ---
+        # Capture previous regime before update (for FFv2 bumpless and diagnostics)
+        self._last_regime_prev = self.gov.regime.value if self.gov.regime else ""
+
         regime = self.gov.determine_regime(
             self.phase,
             ext_current_temp,
@@ -1978,6 +2056,56 @@ class SmartPI:
         )
         self.u_prev = self._on_percent
         self._cycles_since_reset += 1
+
+        # --- 14b. FFv2: hold estimator record & saturation tracking ---
+        # Update persistent saturation counter
+        if self.ctl.last_sat != "NO_SAT":
+            self._sat_persistent_cycles += 1
+        else:
+            self._sat_persistent_cycles = 0
+
+        # Record this cycle in the hold estimator (for u_hold_emp learning)
+        if self._last_ff_result is not None:
+            self._hold_estimator.record_cycle(
+                u_applied=self._last_u_applied,
+                error=self._last_error,
+                slope_h=slope,  # °C/h as received from thermostat
+                regime=self.gov.regime,
+                ff_reason=self._last_ff_result.ff_reason,
+                sat_state=self.ctl.last_sat,
+            )
+
+        # --- 14c. FFv2: freeze management for trim & hold ---
+        # Post-reboot freeze countdown
+        if self._ff_v2_reboot_freeze_remaining > 0:
+            self._ff_v2_reboot_freeze_remaining -= 1
+            if self._ff_v2_reboot_freeze_remaining == 0:
+                self._hold_estimator.unfreeze()
+                self._ff_trim.unfreeze()
+                _LOGGER.debug("%s - FFv2: post-reboot freeze lifted", self._name)
+
+        # Freeze conditions for trim (spec section 9.5)
+        ab_state = self._ab_confidence.state
+        coh_state = self._ff_coherence.state
+        is_saturated = regime == GovernanceRegime.SATURATED
+        is_perturbed = regime == GovernanceRegime.PERTURBED
+
+        if ab_state in (ABConfidenceState.AB_DEGRADED, ABConfidenceState.AB_BAD):
+            self._ff_trim.freeze(f"ab_{ab_state.value}")
+            self._hold_estimator.freeze(f"ab_{ab_state.value}")
+        elif is_saturated:
+            self._ff_trim.freeze("saturated")
+            self._hold_estimator.freeze("saturated")
+        elif is_perturbed:
+            self._ff_trim.freeze("perturbed")
+            self._hold_estimator.freeze("perturbed")
+        elif coh_state == FFCoherenceState.BAD:
+            self._ff_trim.freeze("coherence_bad")
+            # hold estimator continues to observe (for diagnostics) but trim is frozen
+            self._hold_estimator.unfreeze()
+        else:
+            self._ff_trim.unfreeze()
+            self._hold_estimator.unfreeze()
 
         # --- 15. Thermal Twin & ETA (diagnostics-only) ---
         self._update_twin_diagnostics(current_temp, ext_current_temp, target_temp, hvac_mode)
