@@ -96,12 +96,6 @@ def compute_ff(
     )
     ff_reason = ff_reason_prefix
 
-    # --- Step 4: Hard gate override (legacy security — T well above setpoint) ---
-    if error < -near_band_above_deg:
-        u_ff_eff = 0.0
-        ff_reason = "ff_cut_above_setpoint"
-        _LOGGER.debug("FF hard gate active: T above setpoint (error=%.3f)", error)
-
     return FFResult(
         ff_raw=ff_raw,
         u_ff_ab=u_ff_ab,

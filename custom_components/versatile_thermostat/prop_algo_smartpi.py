@@ -1765,7 +1765,6 @@ class SmartPI:
             or self.Ki <= KI_MIN
             or _i_mode_frozen
             or self._cycles_since_reset < self.ff_warmup_cycles
-            or prev_ff_reason == "ff_cut_above_setpoint"
         )
         self._last_bumpless_requested = 0.0
         self._last_bumpless_applied = 0.0
@@ -1778,9 +1777,6 @@ class SmartPI:
             self._last_bumpless_requested = d_uff
             self._last_bumpless_applied = self.ctl.u_pi - u_pi_before
             self._last_bumpless_clamped = abs(self._last_bumpless_requested + self._last_bumpless_applied) > 0.01
-
-        if ff_result.ff_reason == "ff_cut_above_setpoint":
-            _LOGGER.debug("%s - FF disabled (above setpoint)", self._name)
 
         integrator_hold = gov_decision_g == GovernanceDecision.HARD_FREEZE
 

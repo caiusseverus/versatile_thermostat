@@ -8,8 +8,6 @@ Authority:
   u_ff_eff = alpha * u_ff_base
   alpha in [1 - FF_TAPER_RHO_MAX, 1.0]  =>  [0.75, 1.0]
 
-Note: The hard gate (ff_cut_above_setpoint) is applied as a final override by
-the caller (compute_ff), not by this module.
 """
 from __future__ import annotations
 

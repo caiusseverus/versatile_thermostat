@@ -72,9 +72,6 @@ def _is_cycle_admissible(
     ):
         return False, f"regime_{regime.value}"
 
-    if ff_reason == "ff_cut_above_setpoint":
-        return False, "ff_cut"
-
     if sat_state != "NO_SAT":
         return False, f"sat_{sat_state}"
 
