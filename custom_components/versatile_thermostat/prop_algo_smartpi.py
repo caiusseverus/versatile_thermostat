@@ -1970,14 +1970,12 @@ class SmartPI:
         integrator_hold = integrator_hold or gov_hold
 
         # --- 9. Bumpless Transfer ---
-        if was_in_deadband and not in_deadband_now and not setpoint_changed:
-            if self.Ki > KI_MIN:
-                # Absorb any jump in u_ff (e.g. taper alpha changes) by adapting the integral,
-                # but allow the proportional response (Kp * e_p) to act normally.
-                req_i_val = (self.u_prev - u_ff) / self.Ki
-                current_i = self.ctl.integral
-                self.ctl.bumpless_transfer(req_i_val - current_i, self.Ki)
-                _LOGGER.debug("%s - Bumpless transfer applied, restoring integral for FF changes only", self._name)
+        # Removed bumpless transfer on deadband exit to prevent the integral
+        # from artificially dropping to compensate for naturally rising Feed-Forward.
+        # This completely preserves both the pre-existing base power and new Proportional response.
+        # if was_in_deadband and not in_deadband_now and not setpoint_changed:
+        #    ...
+
 
         # --- 10. Thermal Guard ---
         if hvac_mode == VThermHvacMode_HEAT:
