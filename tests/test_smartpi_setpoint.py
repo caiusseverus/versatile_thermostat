@@ -7,7 +7,6 @@ from custom_components.versatile_thermostat.smartpi.const import (
     SP_MAX_LANDING_ZONE,
     SP_LANDING_ZONE_FACTOR,
     SP_LANDING_ZONE_MIN_P_FRACTION,
-    SP_FILTER_DISABLE_THRESHOLD,
     SP_FILTER_ENABLE_THRESHOLD,
 )
 
@@ -117,12 +116,17 @@ class TestBoostPhase:
 class TestStateMachineStiffness:
     """Verify that filter completely deactivates near setpoint to restore P stiffness."""
 
-    def test_deactivation_near_target(self):
+    def test_deactivation_at_target(self):
         m = _make_manager()
         _filter(m, target=19.0, current=17.0) # Active tracking
         assert m.filter_active
 
-        result = _filter(m, target=19.0, current=18.95) # remaining = 0.05 < DISABLE threshold
+        # Continues filtering even very close to target to prevent jumps
+        result = _filter(m, target=19.0, current=18.95) 
+        assert m.filter_active is True
+        
+        # Deactivates exactly at target
+        result = _filter(m, target=19.0, current=19.0)
         assert m.filter_active is False
         assert result == 19.0 # P gets full transparent signal
 
@@ -239,16 +243,17 @@ class TestBoostToLandingTransition:
             if 19.0 - t > LANDING_ZONE_TEST:
                 assert results[i] == 19.0, f"Cycle {i} (t={t}): expected BOOST, got {results[i]}"
 
-        # LANDING cycles (0.1 < remaining <= 0.8)
+        # LANDING cycles (0.0 < remaining <= 0.8)
         for i, t in enumerate(temps):
             remaining = 19.0 - t
-            if remaining <= LANDING_ZONE_TEST and remaining > SP_FILTER_DISABLE_THRESHOLD:
+            if remaining <= LANDING_ZONE_TEST and remaining > 0.0:
                 assert results[i] < 19.0, f"Cycle {i} (t={t}): expected LANDING (<19.0), got {results[i]}"
 
-        # DEACTIVATED cycles (remaining <= 0.1)
+        # DEACTIVATED cycles (remaining <= 0.0)
+        # Assuming we add 19.0 to temps to test exactly at or above target
         for i, t in enumerate(temps):
             remaining = 19.0 - t
-            if remaining <= SP_FILTER_DISABLE_THRESHOLD:
+            if remaining <= 0.0:
                 assert results[i] == 19.0, f"Cycle {i} (t={t}): expected DEACTIVATED (19.0), got {results[i]}"
 
 

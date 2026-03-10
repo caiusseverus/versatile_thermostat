@@ -11,7 +11,6 @@ from .const import (
     SP_MAX_LANDING_ZONE,
     SP_LANDING_ZONE_FACTOR,
     SP_LANDING_ZONE_MIN_P_FRACTION,
-    SP_FILTER_DISABLE_THRESHOLD,
     SP_FILTER_ENABLE_THRESHOLD,
 )
 from ..vtherm_hvac_mode import VThermHvacMode
@@ -143,8 +142,8 @@ class SmartPISetpointManager:
             self.filter_active = True
 
         # Deactivation: Reached the landing zone core (lock-in)
-        if remaining <= SP_FILTER_DISABLE_THRESHOLD:
-            self.filter_active = False
+        # Note: We now naturally deactivate when reaching the target (remaining <= 0) 
+        # to prevent sudden jumps right before target.
 
         if not self.filter_active:
             # Regulation mode: transparent signal for full stiffness
