@@ -91,7 +91,7 @@ GOVERNANCE_MATRIX = {
     },
     GovernanceRegime.NEAR_BAND: {
         "thermal": (GovernanceDecision.ADAPT_ON, FreezeReason.NONE),
-        "gains": (GovernanceDecision.SOFT_FREEZE_DOWN, FreezeReason.NEAR_BAND),
+        "gains": (GovernanceDecision.ADAPT_ON, FreezeReason.NONE),
     },
     GovernanceRegime.DEAD_BAND: {
         "thermal": (GovernanceDecision.HARD_FREEZE, FreezeReason.DEAD_BAND),
@@ -277,7 +277,7 @@ U_CV_MIN_MEAN = 0.05       # Minimum mean(u) to compute CV (avoids division by ~
 # --- SmartPI Near Band Defaults ---
 DEFAULT_NEAR_BAND_DEG = 0.40
 DEFAULT_KP_NEAR_FACTOR = 0.7
-DEFAULT_KI_NEAR_FACTOR = 0.6
+DEFAULT_KI_NEAR_FACTOR = 1.0
 
 
 # --- Forced Calibration Constants ---

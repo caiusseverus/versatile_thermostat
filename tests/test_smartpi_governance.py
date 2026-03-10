@@ -214,7 +214,7 @@ class TestDecideUpdate:
         assert reason_g == FreezeReason.NONE
 
     def test_near_band_freezes_thermal_softfreezes_gains(self):
-        """Single NEAR_BAND regime → thermal ADAPT_ON, gains SOFT_FREEZE_DOWN."""
+        """Single NEAR_BAND regime → thermal ADAPT_ON, gains ADAPT_ON."""
         spi = make_smartpi()
         force_stable_mode(spi)
         spi._on_percent = 0.5
@@ -228,8 +228,8 @@ class TestDecideUpdate:
 
         assert dec_t == GovernanceDecision.ADAPT_ON
         assert reason_t == FreezeReason.NONE
-        assert dec_g == GovernanceDecision.SOFT_FREEZE_DOWN
-        assert reason_g == FreezeReason.NEAR_BAND
+        assert dec_g == GovernanceDecision.ADAPT_ON
+        assert reason_g == FreezeReason.NONE
 
     def test_dead_band_freezes_all(self):
         """Single DEAD_BAND regime → HARD_FREEZE for both."""
