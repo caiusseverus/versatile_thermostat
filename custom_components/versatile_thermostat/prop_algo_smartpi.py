@@ -1972,6 +1972,13 @@ class SmartPI:
         # if was_in_deadband and not in_deadband_now and not setpoint_changed:
         #    ...
 
+        # Bumpless transfer on deadband ENTRY: reposition the integral so that
+        # u_pi = 0 is consistent at the entry point. This drains the residual
+        # approach integral, preventing large overshoot on the next deadband exit.
+        # The micro-leak then brings the integral progressively toward zero.
+        if not was_in_deadband and in_deadband_now and not setpoint_changed:
+            self.ctl.adjust_integral_for_bumpless_transfer(0.0, self.Kp, self.Ki, e_p)
+
 
         # --- 10. Thermal Guard ---
         if hvac_mode == VThermHvacMode_HEAT:
