@@ -48,6 +48,10 @@ class SmartPISetpointManager:
         # Filter state machine (Tracking vs Regulation)
         self.filter_active: bool = False
 
+        # Remaining distance at filter activation — caps landing_zone to prevent
+        # over-braking on small setpoint steps (e.g. +0.5°C with landing_zone=2.0°C).
+        self._filter_init_remaining: Optional[float] = None
+
     def reset(self):
         """Reset internal state."""
         self.filtered_setpoint = None
@@ -55,6 +59,7 @@ class SmartPISetpointManager:
         self.boost_active = False
         self.prev_setpoint_for_boost = None
         self.filter_active = False
+        self._filter_init_remaining = None
 
     def load_state(self, state: dict):
         """Load state from persistence."""
@@ -73,6 +78,10 @@ class SmartPISetpointManager:
 
         self.filter_active = bool(state.get("setpoint_filter_active", False))
 
+        fir = state.get("filter_init_remaining")
+        if fir is not None:
+            self._filter_init_remaining = float(fir)
+
     def save_state(self) -> dict:
         """Save state for persistence."""
         return {
@@ -80,6 +89,7 @@ class SmartPISetpointManager:
             "setpoint_boost_active": self.boost_active,
             "prev_setpoint_for_boost": self.prev_setpoint_for_boost,
             "setpoint_filter_active": self.filter_active,
+            "filter_init_remaining": self._filter_init_remaining,
         }
 
     def filter_setpoint(
@@ -124,6 +134,7 @@ class SmartPISetpointManager:
             self.filtered_setpoint = target_temp
             self.effective_setpoint = target_temp
             self.filter_active = False  # Drop disables filter immediately
+            self._filter_init_remaining = None
             return target_temp
 
         # Track target for rise detection
@@ -134,12 +145,15 @@ class SmartPISetpointManager:
         remaining = target_temp - current_temp
         if remaining <= 0:
             self.filter_active = False
+            self._filter_init_remaining = None
             self.effective_setpoint = target_temp
             return target_temp
 
         # Activation: Large setpoint increase or large temperature drop (perturbation)
         if sp_delta >= SP_FILTER_ENABLE_THRESHOLD or remaining >= SP_FILTER_ENABLE_THRESHOLD:
             self.filter_active = True
+            if self._filter_init_remaining is None:
+                self._filter_init_remaining = remaining
 
         # Deactivation: Reached the landing zone core (lock-in)
         # Note: We now naturally deactivate when reaching the target (remaining <= 0) 
@@ -156,6 +170,11 @@ class SmartPISetpointManager:
         # prevent overshoot from thermal inertia.
         landing_zone = a * deadtime_cool_s / 60.0 * SP_LANDING_ZONE_FACTOR
         landing_zone = max(SP_MIN_LANDING_ZONE, min(landing_zone, SP_MAX_LANDING_ZONE))
+
+        # Cap to initial step amplitude: prevents immediate full-braking on small setpoint
+        # changes where remaining < landing_zone from the very first cycle.
+        if self._filter_init_remaining is not None:
+            landing_zone = min(landing_zone, self._filter_init_remaining)
 
         if remaining > landing_zone:
             # BOOST: full power — return target directly
