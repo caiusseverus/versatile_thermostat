@@ -44,12 +44,13 @@ def _call(
 
 
 class TestHardGate:
-    """error < -near_band_above_deg => u_ff_eff = 0, reason = ff_cut_above_setpoint."""
+    """Hard gate (ff_cut_above_setpoint) has been removed. FF passes through regardless of sign."""
 
     def test_above_setpoint_cuts_ff(self):
+        """Hard gate removed: FF is NOT cut when error < -near_band_above_deg."""
         result = _call(error=-0.5, near_band_above_deg=0.3)
-        assert result.u_ff_eff == 0.0
-        assert result.ff_reason == "ff_cut_above_setpoint"
+        assert result.u_ff_eff > 0.0
+        assert result.ff_reason != "ff_cut_above_setpoint"
 
     def test_at_setpoint_exact_no_cut(self):
         """error == 0 should NOT trigger hard gate."""
@@ -64,13 +65,13 @@ class TestHardGate:
         assert result.ff_reason != "ff_cut_above_setpoint"
 
     def test_hard_gate_with_zero_raw(self):
-        """Hard gate still fires even when k_ff=0 (zero FF)."""
+        """With k_ff=0 there is no FF regardless of error; reason is not ff_cut_above_setpoint."""
         result = _call(error=-1.0, near_band_above_deg=0.3, k_ff=0.0)
         assert result.u_ff_eff == 0.0
-        assert result.ff_reason == "ff_cut_above_setpoint"
+        assert result.ff_reason != "ff_cut_above_setpoint"
 
     def test_hard_gate_exact_boundary(self):
-        """error == -near_band_above_deg: boundary is exclusive (< not <=)."""
+        """error == -near_band_above_deg: no gate, FF passes through."""
         # error == -0.3, near_band_above_deg == 0.3 -> NOT cut
         result = _call(error=-0.3, near_band_above_deg=0.3)
         assert result.ff_reason != "ff_cut_above_setpoint"
@@ -163,6 +164,7 @@ class TestInvariants:
 
     @pytest.mark.parametrize("error", [-2.0, -0.5, -0.3, 0.0, 0.05, 0.5, 2.0])
     def test_hard_gate_always_zero_when_beyond_band(self, error):
+        """Hard gate removed: FF is non-zero (passes through taper) for all error values."""
         if error < -0.3:
             result = _call(error=error, near_band_above_deg=0.3)
-            assert result.u_ff_eff == 0.0
+            assert result.u_ff_eff > 0.0

@@ -437,10 +437,13 @@ def test_deadband_freeze():
 
     smartpi.integral = 10.0
     smartpi.u_prev = 0.5
-    integral_before = smartpi.integral
 
-    # First call (init)
+    # First call (init): triggers deadband-entry bumpless transfer which repositions the integral.
+    # The integral is adjusted to make u_pi=0 at deadband entry: i_req = (0 - Kp * e_p) / Ki.
     smartpi.calculate(target_temp=20, current_temp=19.95, ext_current_temp=10, slope=0, hvac_mode=VThermHvacMode_HEAT)
+
+    # Capture the integral after the bumpless entry adjustment (before the 2nd call)
+    integral_before = smartpi.integral
 
     # Simulate time passing (10 min)
     with patch("custom_components.versatile_thermostat.prop_algo_smartpi.time.monotonic") as mock_mono:
@@ -450,10 +453,9 @@ def test_deadband_freeze():
         smartpi.calculate(target_temp=20, current_temp=19.95, ext_current_temp=10, slope=0, hvac_mode=VThermHvacMode_HEAT)  # error = 0.05 < deadband 0.1
 
     # Integral should NOT be fully frozen anymore (micro-leak)
-    # Expected: integral * leak_eff
-    # leak_eff = INTEGRAL_DEADBAND_LEAK (0.999) ** (10 min / 10 min) = 0.999
-    # 10.0 * 0.999 = 9.99
-    expected_integral = 10.0 * 0.999
+    # Expected: integral_before * leak_eff
+    # leak_eff = INTEGRAL_DEADBAND_MICROLEAK (0.999) ** (10 min / 10 min) = 0.999
+    expected_integral = integral_before * 0.999
     assert math.isclose(smartpi.integral, expected_integral, rel_tol=1e-5), \
         f"Integral should leak slightly in deadband: before={integral_before}, after={smartpi.integral}, expected={expected_integral}"
     

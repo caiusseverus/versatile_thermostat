@@ -155,7 +155,7 @@ async def test_smartpi_bumpless_ff_asymmetric(hass):
     assert algo.u_ff > 0.1
     integral_base = algo.ctl.integral
     
-    # 2. Temperature shoots up, gate hard cuts FF
+    # 2. Temperature shoots up above setpoint — hard gate has been removed, FF still flows.
     algo.gov.on_cycle_start()
     algo.calculate(
         target_temp=20.0,
@@ -163,10 +163,10 @@ async def test_smartpi_bumpless_ff_asymmetric(hass):
         ext_current_temp=19.5,
         hvac_mode=VThermHvacMode_HEAT
     )
-    
-    assert algo.u_ff == 0.0 # Gated
+
+    assert algo.u_ff >= 0.0 # Hard gate removed: FF is non-negative (taper may reduce it)
     integral_after_cut = algo.ctl.integral
-    
+
     # 3. Temperature drops back, FF resumes
     algo.gov.on_cycle_start()
     algo.calculate(
@@ -175,12 +175,10 @@ async def test_smartpi_bumpless_ff_asymmetric(hass):
         ext_current_temp=19.5,
         hvac_mode=VThermHvacMode_HEAT
     )
-    
-    assert algo.u_ff > 0.1 # FF restored
+
+    assert algo.u_ff > 0.1 # FF active near setpoint
     integral_after_resume = algo.ctl.integral
 
-    # The FF gate opening from ff_cut_above_setpoint is an artificial event, not a physical
-    # change in feedforward force. With small Ki the resulting delta-I = delta_u_ff / Ki would
-    # be enormous. The bumpless transfer must therefore be skipped in this case.
-    # The integral should remain stable (no large spike downward).
+    # With the hard gate removed, there is no longer an artificial FF step event.
+    # The integral should remain stable across the temperature excursion.
     assert abs(integral_after_resume - integral_after_cut) < 0.5

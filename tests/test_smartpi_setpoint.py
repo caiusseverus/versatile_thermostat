@@ -60,12 +60,13 @@ class TestBumplessTransfer:
         assert result == 22.0
 
     def test_init_landing_phase(self):
-        """First call within landing zone: returns quadratic value if step was large enough."""
+        """First call within landing zone: landing_zone is capped to initial remaining."""
         m = _make_manager()
-        # current=18.5, target=19.0: remaining=0.5 < landing_zone(0.8). Step is 0.5 >= ENABLE_THRESHOLD
+        # current=18.5, target=19.0: remaining=0.5, step=0.5 >= ENABLE_THRESHOLD → filter_active=True
+        # _filter_init_remaining is capped to remaining=0.5, so landing_zone=min(0.8, 0.5)=0.5.
+        # With remaining==landing_zone, quadratic gives sp_for_p = target (full power on first cycle).
         result = _filter(m, target=19.0, current=18.5)
-        expected = _quadratic(18.5, 19.0, LANDING_ZONE_TEST)
-        assert abs(result - expected) < 1e-9
+        assert result == 19.0
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +149,9 @@ class TestStateMachineStiffness:
 
         result = _filter(m, target=19.0, current=18.4) # remaining=0.6 >= ENABLE
         assert m.filter_active is True
-        # Since 0.6 <= lz (0.8), it's in landing zone immediately
-        expected = _quadratic(18.4, 19.0, LANDING_ZONE_TEST)
-        assert abs(result - expected) < 1e-9
+        # _filter_init_remaining is capped to remaining=0.6, so landing_zone=min(0.8, 0.6)=0.6.
+        # With remaining==landing_zone on the first disturbance cycle, sp_for_p = target (full power).
+        assert result == 19.0
 
 
 # ---------------------------------------------------------------------------
@@ -212,12 +213,13 @@ class TestLandingPhase:
                 f"P_error not decreasing: {p_errors[i]:.6f} vs {p_errors[i+1]:.6f}"
 
     def test_landing_works_for_disturbance(self):
-        """Quadratic landing works for disturbance recovery if large enough."""
+        """Quadratic landing activates for disturbance recovery; first cycle returns target."""
         m = _make_manager()
         _filter(m, target=19.0, current=19.0)  # init at target
+        # remaining=0.6, _filter_init_remaining capped to 0.6 → landing_zone=0.6=remaining
+        # First disturbance cycle: sp_for_p = target (quadratic reduces to full power at boundary)
         result = _filter(m, target=19.0, current=18.4) # activates (remaining=0.6)
-        expected = _quadratic(18.4, 19.0, LANDING_ZONE_TEST)
-        assert abs(result - expected) < 1e-9
+        assert result == 19.0
 
 
 # ---------------------------------------------------------------------------
@@ -301,10 +303,10 @@ class TestLandingZoneComputation:
     def test_landing_zone_clamped_max(self):
         """Very large a*deadtime gets clamped to SP_MAX_LANDING_ZONE."""
         m = _make_manager()
-        # a*deadtime/60 = 0.1*3600/60 = 6.0 → clamped to MAX (2.0)
-        _filter(m, target=25.0, current=15.0, a=0.1, deadtime=3600.0) # activate
-        # current=23.5 → remaining=1.5 < 2.0 → LANDING
-        result = _filter(m, target=25.0, current=23.5, a=0.1, deadtime=3600.0)
+        # a*deadtime/60 = 0.1*3600/60 = 6.0 → clamped to MAX (1.5)
+        _filter(m, target=25.0, current=15.0, a=0.1, deadtime=3600.0) # activate (BOOST)
+        # current=23.6 → remaining=1.4 < SP_MAX_LANDING_ZONE (1.5) → LANDING
+        result = _filter(m, target=25.0, current=23.6, a=0.1, deadtime=3600.0)
         assert result < 25.0  # LANDING
 
 

@@ -340,8 +340,8 @@ class SmartPIController:
                 u_pi = kp * error_p + ki * self.integral
                 self.last_i_mode = "I:HOLD"
                 
-                # Overshoot bleeding — use raw error so filtered-SP transient doesn't bleed
-                if hvac_mode != VThermHvacMode_COOL and error <= OVERSHOOT_I_CLAMP_EPS_C:
+                # Overshoot bleeding — only when temperature has actually exceeded setpoint
+                if hvac_mode != VThermHvacMode_COOL and error <= 0.0:
                     if self.integral > 0.0:
                         leak_eff = INTEGRAL_LEAK ** (dt_min / max(1e-9, float(cycle_min)))
                         self.integral *= leak_eff

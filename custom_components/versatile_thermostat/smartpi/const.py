@@ -145,7 +145,7 @@ SETPOINT_BOOST_RATE = 0.50       # boosted rate limit (/min) vs 0.15 normal
 # - Small change (< threshold): minor adjustment -> bumpless transfer with limited output jump
 SETPOINT_MODE_DELTA_C = 0.5      # °C threshold for mode change detection
 SETPOINT_BUMPLESS_MAX_DU = 0.12  # Max allowed output change (0..1) for bumpless transfer
-OVERSHOOT_I_CLAMP_EPS_C = 0.10  # Guard band below setpoint where integral cannot increase (°C)
+OVERSHOOT_I_CLAMP_EPS_C = 0.04  # Guard band below setpoint where integral cannot increase (°C)
 
 # Tracking anti-windup (back-calculation) tuned for slow thermal systems
 AW_TRACK_TAU_S = 120.0        # tracking time constant in seconds (typ. 60-180s)
