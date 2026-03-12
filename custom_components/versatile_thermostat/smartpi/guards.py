@@ -2,7 +2,7 @@
 import logging
 from typing import TypedDict, Optional
 
-from ..vtherm_hvac_mode import VThermHvacMode
+from ..vtherm_hvac_mode import VThermHvacMode, VThermHvacMode_HEAT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class SmartPIGuards:
         if (
             current_temp is None 
             or target_temp is None 
-            or hvac_mode != "heat" # Using string or Enum, standardizing on what handler passes
+            or hvac_mode != VThermHvacMode_HEAT
             or is_calibration
         ):
             return GuardAction.NONE
@@ -136,7 +136,7 @@ class SmartPIGuards:
         if (
             current_temp is None 
             or target_temp is None 
-            or hvac_mode != "heat"
+            or hvac_mode != VThermHvacMode_HEAT
             or is_calibration
         ):
             return GuardAction.NONE
