@@ -400,82 +400,13 @@ class SmartPIController:
         
         return self.u_cmd
 
-    def update_anti_windup(
+    def finalize_cycle(
         self,
         u_limited: float,
         u_applied: float,
-        dt_min: float,
-        ki: float,
-        kp: float,
-        error_p: float,
-        integrator_hold: bool,
-        in_deadband: bool,
-        max_on_percent: float | None,
-        current_temp: float,
-        target_temp: float,
-        hysteresis_thermal_guard: bool,
-        hvac_mode: VThermHvacMode | None = None,
-    ):
-        """Back-calculation Anti-Windup with cascade policy.
-
-        Cascade priorities (descending):
-          1. SKIP / HOLD / FREEZE / GUARD  -> block AW entirely (d_integral = 0)
-          2. Thermal invariant (Tin > SP in HEAT, Tin < SP in COOL) -> discharge only
-          3. CLAMP                         -> block AW entirely
-          4. Nominal                       -> free back-calculation
-        """
+    ) -> None:
+        """Record applied command values for the next cycle. No integral modification."""
         self.u_applied = u_applied
         self.u_limited = u_limited
-
-        # Structural pre-conditions: integrator_hold, ki too small, or in deadband
-        if integrator_hold or ki <= KI_MIN or in_deadband:
-            self.last_aw_du = 0.0
-            self.u_prev = u_applied
-            return
-
-        # Compute raw back-calculation correction
-        u_model = self.u_ff + (kp * error_p + ki * self.integral)
-
-        # Modif 1: use the command actually applied to the process (not u_limited)
-        u_aw_ref = u_applied
-
-        # Exception: if external max_on_percent constraint saturated u_cmd, use u_cmd
-        if max_on_percent is not None and self.u_cmd > max_on_percent + 1e-9:
-            u_aw_ref = self.u_cmd
-
-        du = u_aw_ref - u_model
-        self.last_aw_du = du
-
-        dt_sec = dt_min * 60.0
-        beta = clamp(dt_sec / max(AW_TRACK_TAU_S, dt_sec), 0.0, 1.0)
-
-        d_integral = beta * (du / ki)
-        max_di = AW_TRACK_MAX_DELTA_I * max(dt_min, 0.0)
-        d_integral = clamp(d_integral, -max_di, max_di)
-
-        # Modif 2: Cascade AW policy
-        i_mode = str(self.last_i_mode)
-
-        # Priority 1: block AW if integrator was explicitly frozen by compute_pwm
-        if any(i_mode.startswith(p) for p in ("I:SKIP", "I:HOLD", "I:FREEZE", "I:GUARD")):
-            d_integral = 0.0
-
-        # Priority 2: thermal invariant — discharge only when Tin has overshot SP
-        elif hvac_mode != VThermHvacMode_COOL and current_temp > target_temp:
-            d_integral = min(0.0, d_integral)
-
-        elif hvac_mode == VThermHvacMode_COOL and current_temp < target_temp:
-            d_integral = max(0.0, d_integral)
-
-        # Priority 3: clamp mode active — block AW
-        elif i_mode.startswith("I:CLAMP"):
-            d_integral = 0.0
-
-        # Priority 4: nominal free back-calculation (d_integral unchanged)
-
-        i_max = 2.0 / max(ki, KI_MIN)
-        self.integral += d_integral
-        self.integral = clamp(self.integral, -i_max, i_max)
-
-        # Prepare for next cycle
         self.u_prev = u_applied
+        self.last_aw_du = 0.0

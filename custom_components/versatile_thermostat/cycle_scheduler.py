@@ -541,9 +541,10 @@ class CycleScheduler:
 
     async def _fire_cycle_end_callbacks(self, e_eff: float, elapsed_ratio: float = 1.0):
         """Fire all registered cycle end callbacks with e_eff and elapsed_ratio."""
+        cycle_duration_min = self._cycle_duration_sec / 60.0
         for callback in self._on_cycle_end_callbacks:
             try:
-                await callback(e_eff=e_eff, elapsed_ratio=elapsed_ratio)
+                await callback(e_eff=e_eff, elapsed_ratio=elapsed_ratio, cycle_duration_min=cycle_duration_min)
             except Exception as ex:
                 _LOGGER.warning(
                     "%s - Error calling cycle end callback %s: %s",
