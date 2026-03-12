@@ -1979,7 +1979,6 @@ class SmartPI:
         if not was_in_deadband and in_deadband_now and not setpoint_changed:
             self.ctl.adjust_integral_for_bumpless_transfer(0.0, self.Kp, self.Ki, e_p)
 
-
         # --- 10. Thermal Guard ---
         if hvac_mode == VThermHvacMode_HEAT:
             if self._last_target_temp is not None and target_temp < self._last_target_temp - 0.01:
@@ -2060,7 +2059,6 @@ class SmartPI:
             is_hysteresis=False
         )
         self.u_prev = self._on_percent
-        self._cycles_since_reset += 1
 
         # --- 14b. FFv2: hold estimator record & saturation tracking ---
         # Update persistent saturation counter
