@@ -351,6 +351,7 @@ FF_HOLD_E_MAX_C = 0.2     # Max |error| (degC) for a cycle to be admissible
 FF_HOLD_SLOPE_MAX_H = 0.18  # 0.03 degC/10min = 0.18 degC/h
 FF_HOLD_DU_MAX = 0.15     # Max Q95-Q05 spread of u_applied over the window
 FF_HOLD_MIN_CYCLES = 3    # Minimum consecutive admissible cycles for a valid episode
+FF_HOLD_CONF_DECAY_PER_REJECTION = 5e-4  # Confidence loss per rejected cycle (linear decay)
 
 # AB confidence & fallback
 AB_BAD_PERSIST_CYCLES = 3           # Cycles in AB_BAD before fallback activates

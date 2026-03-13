@@ -22,6 +22,7 @@ from .const import (
     FF_HOLD_SLOPE_MAX_H,
     FF_HOLD_DU_MAX,
     FF_HOLD_MIN_CYCLES,
+    FF_HOLD_CONF_DECAY_PER_REJECTION,
 )
 
 if TYPE_CHECKING:
@@ -120,6 +121,10 @@ class HoldEstimator:
             _LOGGER.debug("HoldEstimator: cycle rejected (%s), resetting streak", reason)
             self._cycle_buffer = []
             self._consecutive_count = 0
+            # Sustained rejections signal the system is not in the quasi-stationary
+            # state that u_hold_emp assumes. Erode confidence slowly so that a stale
+            # estimate (after season change or hardware replacement) loses trust over time.
+            self.hold_confidence = max(0.0, self.hold_confidence - FF_HOLD_CONF_DECAY_PER_REJECTION)
 
     def try_learn(self) -> bool:
         """Attempt to update u_hold_emp if the window is valid.
