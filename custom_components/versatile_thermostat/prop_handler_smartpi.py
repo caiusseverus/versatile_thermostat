@@ -220,24 +220,6 @@ class SmartPIHandler:
                 )
                 force = True
 
-            # Trigger learning only on cycle timer (timestamp is not None)
-            # And do not learn if we are OFF (window open, etc.)
-            if timestamp is not None and current_temp is not None and t.vtherm_hvac_mode != VThermHvacMode_OFF:
-                # Data provider is no longer used for power feedback, which is now provided via e_eff at cycle end.
-                async def _data_provider():
-                    return {
-                        "temp_in": t.current_temperature,
-                        "temp_ext": t.current_outdoor_temperature,
-                        "timestamp": timestamp,
-                        "hvac_mode": t.vtherm_hvac_mode
-                    }
-
-                async def _event_sender(params):
-                    # Events are applied by the handler below (lines 165+)
-                    pass
-
-                await t.prop_algorithm.process_cycle(timestamp, _data_provider, _event_sender, force)
-
         # Stop here if we are off
         if t.vtherm_hvac_mode == VThermHvacMode_OFF:
             _LOGGER.debug("%s - End of cycle (HVAC_MODE_OFF)", t)

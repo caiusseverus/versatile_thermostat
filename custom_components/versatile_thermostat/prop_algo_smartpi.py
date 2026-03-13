@@ -715,8 +715,6 @@ class SmartPI:
             # Use the nominal cycle duration (provided by the scheduler) as dt_min for Astrom tracking.
             # This is more accurate than measuring time since last calculate(), which can be short
             # when a recalc timer fires mid-cycle.
-            if cycle_duration_min is None:
-                cycle_duration_min = self._cycle_min * max(elapsed_ratio, 0.01)
             self.update_realized_power(u_applied=e_eff, dt_min=cycle_duration_min, forced_by_timing=False, elapsed_ratio=elapsed_ratio)
 
         # --- FFv2: attempt hold learning and trim update ---
@@ -736,16 +734,6 @@ class SmartPI:
 
         # Cycle accepted -> Count it
         self._cycles_since_reset += 1
-
-    async def process_cycle(self, timestamp, data_provider, event_sender, force: bool) -> None:
-        """Invoke the cycle data provider to compute timing and realized power.
-
-        Cycle boundary tracking (on_cycle_started / on_cycle_completed) is driven
-        by CycleScheduler via registered callbacks. This method only executes the
-        provider so that timing constraints and anti-windup updates are applied.
-        """
-        if data_provider is not None:
-            await data_provider()
 
     @property
     def a(self) -> float:
@@ -2036,7 +2024,7 @@ class SmartPI:
             max_on_percent=self._max_on_percent if self._max_on_percent is not None else 1.0,
             is_hysteresis=False
         )
-        self.u_prev = self._on_percent
+        # self.u_prev = self._on_percent
 
         # --- 14b. FFv2: hold estimator record & saturation tracking ---
         # Update persistent saturation counter

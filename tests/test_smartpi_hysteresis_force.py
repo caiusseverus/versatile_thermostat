@@ -52,13 +52,6 @@ async def test_smartpi_hysteresis_forces_cycle():
     # Simulate hysteresis toggling to 100% (changed from default 0%)
     algo.on_percent = 1.0
     algo.calculate = MagicMock()
-    algo._last_calculate_time = None  # Needed by handler's _data_provider
-
-    # Mock process_cycle behavior: it calls the data_provider we pass to it
-    async def fake_process_cycle(timestamp, provider, sender, force):
-        await provider()
-    algo.process_cycle = AsyncMock(side_effect=fake_process_cycle)
-
     # CRITICAL: Set phase to HYSTERESIS
     algo.phase = SmartPIPhase.HYSTERESIS
     algo.guard_cut_active = False
