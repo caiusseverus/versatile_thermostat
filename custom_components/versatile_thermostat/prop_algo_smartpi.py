@@ -1219,9 +1219,10 @@ class SmartPI:
         # Reference = what the PI model would have commanded
         u_model = self.ctl.u_ff + (self.Kp * self.ctl.last_error_p + self.Ki * self.ctl.integral)
 
-        # Reality = energy actually delivered, normalized to full cycle duration
-        val_normalized = val * elapsed_ratio
-        du = val_normalized - u_model
+        # Reality = power actually delivered during the elapsed window
+        # For a partial cycle, val is the average duty cycle during elapsed_ratio.
+        # We compare this directly to u_model to find the rate deviation.
+        du = val - u_model
         self._last_aw_du = du
 
         # Thermal invariant: allow discharge only when temperature has overshot setpoint
@@ -1240,12 +1241,18 @@ class SmartPI:
         ki_eff = max(abs(self.Ki), KI_MIN)
 
         # Åström tracking dynamics — avoid brutal step correction
-        dt_sec = dt_min * 60.0
+        # We scale the effective integration time by elapsed_ratio since this error 
+        # only existed for that duration.
+        effective_dt_min = dt_min * elapsed_ratio
+        if effective_dt_min <= 0.001:
+            return
+
+        dt_sec = effective_dt_min * 60.0
         beta = clamp(dt_sec / max(AW_TRACK_TAU_S, dt_sec), 0.0, 1.0)
         dI = beta * (du / ki_eff)
 
-        # Per-cycle bound
-        dI_max = AW_TRACK_MAX_DELTA_I * dt_min
+        # Per-cycle bound scaled by elapsed time
+        dI_max = AW_TRACK_MAX_DELTA_I * effective_dt_min
         dI = clamp(dI, -dI_max, dI_max)
 
         # Apply and clamp
