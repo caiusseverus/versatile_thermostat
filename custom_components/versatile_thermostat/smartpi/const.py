@@ -276,7 +276,7 @@ U_CV_MIN_MEAN = 0.05       # Minimum mean(u) to compute CV (avoids division by ~
 # --- SmartPI Near Band Defaults ---
 DEFAULT_NEAR_BAND_DEG = 0.40
 DEFAULT_KP_NEAR_FACTOR = 0.7
-DEFAULT_KI_NEAR_FACTOR = 1.0
+DEFAULT_KI_NEAR_FACTOR = 0.8
 
 
 # --- Forced Calibration Constants ---

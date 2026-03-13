@@ -1976,10 +1976,9 @@ class SmartPI:
             self.ctl.adjust_integral_for_bumpless_transfer(0.0, self.Kp, self.Ki, e_p)
 
         # --- 10. Thermal Guard ---
+        # Guard activation is handled by controller.handle_setpoint_change() on setpoint decrease.
+        # Here we only handle temperature-based deactivation once the room has cooled back to target.
         if hvac_mode == VThermHvacMode_HEAT:
-            if self._last_target_temp is not None and target_temp < self._last_target_temp - 0.01:
-                if current_temp > target_temp + DEADBAND_ABOVE_C:
-                    self._hysteresis_thermal_guard = True
             if self._hysteresis_thermal_guard:
                 if current_temp <= target_temp + DEADBAND_BELOW_C:
                     self._hysteresis_thermal_guard = False
